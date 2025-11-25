@@ -43,6 +43,30 @@ class Database:
         response = self.client.table("patients").insert(data).execute()
         return response.data[0]
 
+    async def get_patient_by_id(self, patient_id: str) -> Optional[Dict]:
+        """Get patient by ID."""
+        response = self.client.table("patients").select("*").eq(
+            "id", patient_id
+        ).single().execute()
+
+        return response.data if response.data else None
+
+    async def get_patient_details(self, patient_id: str) -> Dict:
+        """Fetch patient record with recent sessions and risk events."""
+        patient = await self.get_patient_by_id(patient_id)
+
+        sessions = await self.get_patient_sessions(patient_id, limit=20)
+
+        risk_events_response = self.client.table("risk_events").select("*").eq(
+            "patient_id", patient_id
+        ).order("created_at", desc=True).limit(20).execute()
+
+        return {
+            "patient": patient,
+            "sessions": sessions,
+            "risk_events": risk_events_response.data
+        }
+
     # ========================================================================
     # SESSION OPERATIONS
     # ========================================================================
@@ -50,14 +74,16 @@ class Database:
     async def create_session(
         self,
         patient_id: str,
-        session_goal: Optional[str] = None
+        session_goal: Optional[str] = None,
+        conversation_mode: Optional[str] = "adaptive"
     ) -> Dict:
         """Create a new chat session."""
         data = {
             "patient_id": patient_id,
             "session_goal": session_goal,
             "status": "active",
-            "current_state": "consent"
+            "current_state": "menu",
+            "conversation_mode": conversation_mode
         }
         response = self.client.table("sessions").insert(data).execute()
         return response.data[0]

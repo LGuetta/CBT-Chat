@@ -44,7 +44,7 @@ distress_assessor = DistressAssessor(llm_service=llm_service)
 # Load base prompt from prompts.yaml
 def load_base_prompt() -> str:
     """Load base prompt from prompts.yaml"""
-    with open("config/prompts.yaml", "r") as f:
+    with open("config/prompts.yaml", "r", encoding="utf-8") as f:
         prompts = yaml.safe_load(f)
     return prompts["system_prompts"]["base"]
 
@@ -244,6 +244,11 @@ async def send_message(request: ChatMessageRequest):
             triggered_by=f"message_count_{len(history_formatted) // 2}"
         )
 
+    # Determine resources to return to client
+    resources_payload = None
+    if result["risk_detection"]["should_escalate"]:
+        resources_payload = _get_crisis_resources(patient.get("country_code", "US"))
+
     # Build response
     return ChatResponse(
         session_id=session["id"],
@@ -258,8 +263,12 @@ async def send_message(request: ChatMessageRequest):
         current_state=session.get("current_state", "menu"),
         risk_detected=result["risk_detection"]["should_escalate"],
         risk_level=RiskLevel(result["risk_detection"]["level"]),
+        risk_reasoning=result["risk_detection"]["reasoning"],
+        risk_triggers=result["risk_detection"]["triggers"],
+        distress_reasoning=result["distress_assessment"]["reasoning"],
+        distress_signals=result["distress_assessment"]["signals_detected"],
         should_end_session=result.get("should_end_session", False),
-        resources=_get_crisis_resources(patient.get("country_code", "US")) if result.get("should_end_session") else None
+        resources=resources_payload
     )
 
 

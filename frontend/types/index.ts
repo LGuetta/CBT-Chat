@@ -66,12 +66,60 @@ export enum NotificationPriority {
   CRITICAL = "critical",
 }
 
+export interface PreferredTechniques {
+  cognitive_restructuring?: boolean;
+  behavioral_activation?: boolean;
+  exposure?: boolean;
+  distress_tolerance?: boolean;
+  schema_work?: boolean;
+}
+
+export interface ClinicalSensitivities {
+  trauma_history?: string | null;
+  pacing?: string | null;
+  topics_to_avoid?: string[];
+}
+
+export interface TherapistLanguage {
+  metaphors?: string[];
+  coping_statements?: string[];
+  preferred_terms?: Record<string, string>;
+}
+
+export interface TherapistBrief {
+  case_formulation?: string | null;
+  presenting_problems?: string[];
+  treatment_goals?: string[];
+  therapy_stage?: string;
+  preferred_techniques?: PreferredTechniques;
+  sensitivities?: ClinicalSensitivities;
+  therapist_language?: TherapistLanguage;
+  contraindications?: string[];
+}
+
+export interface PatientWithBrief {
+  id: string;
+  access_code: string;
+  preferred_name?: string | null;
+  country_code: string;
+  therapist_brief?: TherapistBrief | null;
+  created_at: string;
+}
+
+export interface PatientDetails {
+  patient: PatientWithBrief;
+  recent_sessions: Session[];
+  recent_risk_events: RiskEvent[];
+}
+
 export interface Message {
   id: string;
   role: MessageRole;
   content: string;
   created_at: string;
   risk_level?: RiskLevel;
+  risk_reasoning?: string;
+  risk_triggers?: string[];
   // Opzione C metadata
   distress_level?: DistressLevel;
   is_grounding_exercise?: boolean;
@@ -101,11 +149,14 @@ export interface ChatResponse {
   current_state: ConversationState;
   risk_detected: boolean;
   risk_level: RiskLevel;
+  risk_reasoning?: string;
+  risk_triggers?: string[];
   should_end_session: boolean;
   resources?: Record<string, string>;
   // Opzione C additions
   distress_level?: DistressLevel;
   distress_reasoning?: string;
+  distress_signals?: string[];
   grounding_offered?: boolean;
   grounding_technique?: string;
   disclaimer_shown?: boolean;

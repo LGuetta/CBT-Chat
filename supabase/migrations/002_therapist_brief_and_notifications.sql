@@ -335,6 +335,7 @@ SELECT
     COUNT(DISTINCT s.id) AS total_sessions,
     COUNT(DISTINCT CASE WHEN s.risk_flagged THEN s.id END) AS flagged_sessions,
     MAX(s.started_at) AS last_session_date,
+    MAX(CASE WHEN s.risk_flagged THEN s.started_at END) AS last_flag_date,
 
     -- Risk stats
     COUNT(DISTINCT re.id) FILTER (WHERE re.therapist_reviewed = FALSE) AS unreviewed_risk_events,

@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     api_host: str = Field(default="0.0.0.0", alias="API_HOST")
     api_port: int = Field(default=8000, alias="API_PORT")
     cors_origins: List[str] = Field(
-        default=["http://localhost:3000"],
+        default=["http://localhost:3000", "http://localhost:3001"],
         alias="CORS_ORIGINS"
     )
 

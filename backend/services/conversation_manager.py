@@ -81,10 +81,9 @@ class ConversationManager:
             Dict with response, risk_info, distress_info, disclaimer_shown, etc.
         """
         # 1. SAFETY FIRST - Risk detection
-        risk_result = await self.risk_detector.detect(
+        risk_result = await self.risk_detector.detect_risk(
             message=message,
-            conversation_history=context.history,
-            country_code=context.country_code
+            conversation_history=context.history
         )
 
         # If HIGH or CRITICAL risk, activate crisis protocol
@@ -144,10 +143,10 @@ class ConversationManager:
         )
 
         # 7. GENERATE RESPONSE
-        llm_response = await self.llm.complete(
-            system_prompt=system_prompt,
-            messages=context.history + [{"role": "user", "content": message}],
-            model="deepseek"  # Primary LLM
+        messages = [{"role": "system", "content": system_prompt}] + context.history + [{"role": "user", "content": message}]
+        llm_response = await self.llm.generate_response(
+            messages=messages,
+            provider="deepseek"  # Primary LLM
         )
 
         # 8. PREPARE RESPONSE

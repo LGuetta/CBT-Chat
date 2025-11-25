@@ -174,8 +174,12 @@ class ChatResponse(BaseModel):
     current_state: ConversationState
     risk_detected: bool
     risk_level: RiskLevel
+    risk_reasoning: Optional[str] = None
+    risk_triggers: Optional[List[str]] = None
     should_end_session: bool = False
     resources: Optional[Dict[str, str]] = None
+    distress_reasoning: Optional[str] = None
+    distress_signals: Optional[List[str]] = None
 
 
 class RiskEventResponse(BaseModel):
@@ -347,8 +351,6 @@ class TherapistBrief(BaseModel):
 
 class UpdateTherapistBriefRequest(BaseModel):
     """Request to update therapist brief for a patient."""
-    patient_id: str
-    therapist_email: str
     brief: TherapistBrief
 
 
@@ -503,6 +505,13 @@ class PatientWithBrief(BaseModel):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class PatientDetailsResponse(BaseModel):
+    """Detailed patient view for therapist dashboard."""
+    patient: PatientWithBrief
+    recent_sessions: List[SessionResponse]
+    recent_risk_events: List[RiskEventResponse]
 
 
 # ============================================================================

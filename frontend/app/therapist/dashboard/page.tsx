@@ -26,10 +26,13 @@ export default function TherapistDashboardPage() {
   const loadDashboard = async (email: string) => {
     try {
       setLoading(true);
+      setError(null);
       const data = await apiClient.getTherapistDashboard(email);
       setDashboard(data);
     } catch (err: any) {
-      setError(err.message || "Failed to load dashboard");
+      console.error("Dashboard load error:", err);
+      const errorMessage = err.response?.data?.detail || err.response?.data?.message || err.message || "Failed to load dashboard";
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }

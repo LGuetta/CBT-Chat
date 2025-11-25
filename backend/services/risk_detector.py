@@ -21,7 +21,8 @@ llm_service = get_llm_service()
 class RiskDetector:
     """Detects risk in user messages using keyword matching + LLM analysis."""
 
-    def __init__(self):
+    def __init__(self, llm_service=None):
+        self.llm_service = llm_service or get_llm_service()
         self.high_risk_keywords = prompts.get_risk_keywords("high")
         self.medium_risk_keywords = prompts.get_risk_keywords("medium")
 
@@ -52,20 +53,20 @@ class RiskDetector:
         # Step 1: Keyword-based quick check
         detected_keywords = self._check_keywords(message)
 
-        # If no keywords detected, return low risk without LLM call (cost saving)
-        if not detected_keywords:
+        # Step 2: LLM-based analysis for nuanced understanding
+        # Always run LLM for safety unless the message is too short to contain signal
+        if not detected_keywords and len(message.strip()) < 5:
             return RiskDetectionResult(
                 risk_level=RiskLevel.LOW,
-                reasoning="No risk keywords detected",
+                reasoning="Message too short for reliable analysis",
                 triggers=[],
                 should_escalate=False,
                 should_end_session=False
             )
 
-        # Step 2: LLM-based analysis for nuanced understanding
         llm_result = await self._llm_risk_analysis(
             message,
-            detected_keywords,
+            detected_keywords if detected_keywords else ["NO_KEYWORD_MATCH"],
             conversation_history
         )
 
@@ -132,7 +133,7 @@ Return ONLY valid JSON in this exact format:
 
         try:
             # Use Claude for risk detection (more reliable for safety)
-            response = await llm_service.risk_detection_response(
+            response = await self.llm_service.risk_detection_response(
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": analysis_prompt}
