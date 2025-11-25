@@ -42,6 +42,12 @@ const stageOptions = [
   { value: "late", label: "Late - Consolidation" },
 ];
 
+const textareaClass =
+  "mt-1 w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-500 p-3 focus:outline-none focus:ring-2 focus:ring-indigo-500";
+
+const selectClass =
+  "mt-1 w-full rounded-lg border border-gray-300 bg-white text-gray-900 p-3 focus:outline-none focus:ring-2 focus:ring-indigo-500";
+
 const listFromTextarea = (value: string) =>
   value
     .split("\n")
@@ -86,6 +92,7 @@ export default function PatientDetailPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [reviewingRiskId, setReviewingRiskId] = useState<string | null>(null);
 
   useEffect(() => {
     const email = sessionStorage.getItem("therapist_email");
@@ -136,6 +143,31 @@ export default function PatientDetailPage() {
       setError(err.message || "Failed to update brief");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleReviewRiskEvent = async (riskEventId: string) => {
+    if (!therapistEmail) return;
+    setReviewingRiskId(riskEventId);
+    setError(null);
+    setSuccessMessage(null);
+    try {
+      await apiClient.reviewRiskEvent(riskEventId, therapistEmail);
+      setSuccessMessage("Risk flag marked as reviewed");
+      setDetails((prev) =>
+        prev
+          ? {
+              ...prev,
+              recent_risk_events: prev.recent_risk_events.map((event) =>
+                event.id === riskEventId ? { ...event, therapist_reviewed: true } : event
+              ),
+            }
+          : prev
+      );
+    } catch (err: any) {
+      setError(err.message || "Failed to mark flag as reviewed");
+    } finally {
+      setReviewingRiskId(null);
     }
   };
 
@@ -219,7 +251,7 @@ export default function PatientDetailPage() {
                   Case Formulation
                 </label>
                 <textarea
-                  className="mt-1 w-full rounded-lg border border-gray-300 p-3 focus:ring-2 focus:ring-indigo-500"
+                  className={textareaClass}
                   rows={4}
                   value={briefForm.case_formulation || ""}
                   onChange={(e) =>
@@ -235,7 +267,7 @@ export default function PatientDetailPage() {
                   Therapy Stage
                 </label>
                 <select
-                  className="mt-1 w-full rounded-lg border border-gray-300 p-3 focus:ring-2 focus:ring-indigo-500"
+                  className={selectClass}
                   value={briefForm.therapy_stage || "early"}
                   onChange={(e) =>
                     setBriefForm((prev) => ({
@@ -256,7 +288,7 @@ export default function PatientDetailPage() {
                   Treatment Goals (one per line)
                 </label>
                 <textarea
-                  className="mt-1 w-full rounded-lg border border-gray-300 p-3 focus:ring-2 focus:ring-indigo-500"
+                  className={textareaClass}
                   rows={3}
                   value={textareaFromList(briefForm.treatment_goals)}
                   onChange={(e) =>
@@ -272,7 +304,7 @@ export default function PatientDetailPage() {
                   Presenting Problems (one per line)
                 </label>
                 <textarea
-                  className="mt-1 w-full rounded-lg border border-gray-300 p-3 focus:ring-2 focus:ring-indigo-500"
+                  className={textareaClass}
                   rows={3}
                   value={textareaFromList(briefForm.presenting_problems)}
                   onChange={(e) =>
@@ -315,7 +347,7 @@ export default function PatientDetailPage() {
                   Sensitivities / Topics to Avoid
                 </label>
                 <textarea
-                  className="mt-1 w-full rounded-lg border border-gray-300 p-3 focus:ring-2 focus:ring-indigo-500"
+                  className={textareaClass}
                   rows={3}
                   value={textareaFromList(briefForm.sensitivities?.topics_to_avoid)}
                   onChange={(e) =>
@@ -334,7 +366,7 @@ export default function PatientDetailPage() {
                   Therapist Language / Metaphors
                 </label>
                 <textarea
-                  className="mt-1 w-full rounded-lg border border-gray-300 p-3 focus:ring-2 focus:ring-indigo-500"
+                  className={textareaClass}
                   rows={3}
                   value={textareaFromList(briefForm.therapist_language?.metaphors)}
                   onChange={(e) =>
@@ -353,7 +385,7 @@ export default function PatientDetailPage() {
                   Coping Statements (one per line)
                 </label>
                 <textarea
-                  className="mt-1 w-full rounded-lg border border-gray-300 p-3 focus:ring-2 focus:ring-indigo-500"
+                  className={textareaClass}
                   rows={3}
                   value={textareaFromList(briefForm.therapist_language?.coping_statements)}
                   onChange={(e) =>
@@ -372,7 +404,7 @@ export default function PatientDetailPage() {
                   Contraindications (one per line)
                 </label>
                 <textarea
-                  className="mt-1 w-full rounded-lg border border-gray-300 p-3 focus:ring-2 focus:ring-indigo-500"
+                  className={textareaClass}
                   rows={3}
                   value={textareaFromList(briefForm.contraindications)}
                   onChange={(e) =>
@@ -466,9 +498,24 @@ export default function PatientDetailPage() {
                       Keywords: {event.detected_keywords.join(", ")}
                     </p>
                   </div>
-                  <span className={`text-xs px-2 py-1 rounded-full ${riskBadge(event.risk_level)}`}>
-                    {event.risk_level.toUpperCase()}
-                  </span>
+                  <div className="flex items-center gap-3">
+                    <span className={`text-xs px-2 py-1 rounded-full ${riskBadge(event.risk_level)}`}>
+                      {event.risk_level.toUpperCase()}
+                    </span>
+                    {event.therapist_reviewed ? (
+                      <span className="text-xs px-2 py-1 rounded-full bg-green-50 text-green-700 border border-green-100">
+                        Reviewed
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => handleReviewRiskEvent(event.id)}
+                        disabled={reviewingRiskId === event.id}
+                        className="text-sm px-3 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
+                      >
+                        {reviewingRiskId === event.id ? "Marking..." : "Mark reviewed"}
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -478,4 +525,3 @@ export default function PatientDetailPage() {
     </div>
   );
 }
-
