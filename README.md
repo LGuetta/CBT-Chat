@@ -51,6 +51,107 @@ Help adults practice CBT skills (psychoeducation, thought records, behavioral ac
 
 ---
 
+## 🎨 Opzione C - Adaptive Conversation System
+
+**NEW:** Advanced conversation system that adapts to patient needs in real-time instead of following fixed steps.
+
+### Core Features
+
+#### 1. **Therapist Brief System** 📋
+Personalized treatment configuration for each patient:
+- **Case Formulation:** Why patient is in therapy, presenting problems
+- **Treatment Goals:** Specific therapy objectives
+- **Therapy Stage:** Early (rapport), Middle (active work), Late (consolidation)
+- **Preferred Techniques:** Which CBT methods to use (cognitive restructuring, BA, exposure, etc.)
+- **Clinical Sensitivities:** Trauma history, pacing needs, topics to avoid
+- **Therapist Language:** Metaphors and coping statements the therapist uses
+- **Contraindications:** Approaches to avoid
+
+The system uses this to tailor every response to match the therapist's treatment plan.
+
+#### 2. **Grounding-First Approach** 🧘
+Trauma-informed distress assessment and automatic grounding:
+- **5 Distress Levels:** NONE → MILD → MODERATE → SEVERE → CRISIS
+- **40+ Distress Signals:** Pattern detection for overwhelm, panic, dissociation
+- **5 Grounding Exercises:**
+  - 5-4-3-2-1 Sensory Grounding (5 min)
+  - Paced Breathing (3 min)
+  - Body Scan (4 min)
+  - Present Moment Orientation (2 min)
+  - Temperature Shift (1 min)
+- **Automatic Offering:** Grounding suggested before CBT work when patient is activated
+
+#### 3. **Enhanced Risk Detection** 🚨
+4-level alert system for therapist notifications:
+- **LOW:** Keyword match only, no LLM confirmation
+- **MEDIUM:** LLM detected concern, monitoring needed
+- **HIGH:** Clear risk, needs prompt attention
+- **CRITICAL:** Active crisis, immediate action required
+
+Database triggers automatically create therapist notifications for HIGH/CRITICAL alerts.
+
+#### 4. **Disclaimer & Boundary System** ℹ️
+Automatic reminders that assistant is not a therapist:
+- **Initial Consent:** Shown at session start
+- **Periodic Reminders:** Every 20 messages
+- **Therapy Referral:** When patient shows high dependency
+- **Crisis Boundaries:** Before crisis protocol activation
+
+All disclaimers logged to `disclaimer_logs` table for tracking.
+
+#### 5. **Therapist Notification System** 📬
+Multi-channel notifications (database ready, email/SMS pending):
+- **Risk Alerts:** Immediate notification for HIGH/CRITICAL events
+- **Pre-Session Reports:** Generated 24h before scheduled appointments
+- **On-Demand Reports:** Session transcripts, patient summaries
+- **Real-Time Dashboard:** Unread notifications, critical alerts, patient activity
+
+#### 6. **Adaptive Response Modes** 🎯
+System dynamically chooses response mode based on context:
+- **Grounding:** Patient distressed → offer grounding exercise
+- **CBT Skill:** Patient regulated → apply therapist-preferred technique
+- **Clarification:** Unclear situation → explore before choosing skill
+- **Crisis Protocol:** HIGH risk → resources + session termination
+- **Collaborative Menu:** Low distress → offer skill options
+
+### Implementation Details
+
+**Database (Migration 002):**
+- Extended `patients` table with Therapist Brief fields
+- New tables: `notifications`, `appointments`, `disclaimer_logs`
+- Enhanced `risk_events` with `alert_level` and `patient_state_at_event`
+- Automatic triggers for therapist notifications
+
+**Backend Services:**
+- `ConversationManager`: Orchestrates adaptive responses (~550 lines)
+- `DistressAssessor`: Evaluates distress and provides grounding (~450 lines)
+- Updated prompts.yaml with full `prompt.txt` content
+
+**Frontend:**
+- Patient chat: Distress indicators, grounding exercise highlighting, disclaimer display
+- Types: Extended with DistressLevel, AlertLevel, Notification schemas
+
+### How It Works
+
+1. **Patient sends message** → ConversationManager receives it
+2. **Safety first** → Risk detection runs (keyword + LLM)
+3. **Assess distress** → DistressAssessor checks for activation signals
+4. **Decide response mode** → Grounding? CBT skill? Clarification?
+5. **Build adaptive prompt** → Inject Therapist Brief + patient state
+6. **Generate response** → LLM produces therapist-aligned reply
+7. **Log & notify** → Save to DB, create notifications if needed
+
+### Benefits Over Fixed State Machine
+
+- ✅ Adapts to patient emotional state (grounding when needed)
+- ✅ Follows therapist's specific treatment plan
+- ✅ More natural, less robotic conversation
+- ✅ Trauma-informed (grounding before cognitive work)
+- ✅ Maintains boundaries (periodic disclaimers)
+- ✅ Better therapist visibility (notifications + alerts)
+
+---
+
 ## 🛠 Tech Stack
 
 ### Backend
@@ -95,9 +196,11 @@ backend/
 │   ├── therapist.py    # Therapist dashboard endpoints
 │   └── admin.py        # Admin/test endpoints
 ├── services/
-│   ├── llm_service.py      # LLM abstraction (DeepSeek + Claude)
-│   ├── risk_detector.py    # Hybrid keyword + LLM risk detection
-│   └── state_machine.py    # CBT conversation flows
+│   ├── llm_service.py          # LLM abstraction (DeepSeek + Claude)
+│   ├── risk_detector.py        # Hybrid keyword + LLM risk detection
+│   ├── conversation_manager.py # Opzione C: Adaptive conversation orchestration
+│   ├── distress_assessor.py    # Opzione C: Distress assessment + grounding
+│   └── state_machine.py        # Legacy: Fixed CBT conversation flows
 ├── models/
 │   └── schemas.py          # Pydantic models
 ├── config/
@@ -140,12 +243,25 @@ END
 ### 1. Database Setup (Supabase)
 
 1. Create a Supabase project at [supabase.com](https://supabase.com)
-2. Run the migration script:
+2. Run the migration scripts in order:
 
 ```bash
-# Copy the SQL from supabase/migrations/001_initial_schema.sql
-# Paste it into Supabase SQL Editor and run it
+# Migration 001: Initial schema
+# Copy SQL from supabase/migrations/001_initial_schema.sql
+# Paste into Supabase SQL Editor and run
+
+# Migration 002: Opzione C (Therapist Brief + Notifications)
+# Copy SQL from supabase/migrations/002_therapist_brief_and_notifications.sql
+# Paste into Supabase SQL Editor and run
 ```
+
+**What Migration 002 adds:**
+- Therapist Brief fields (case_formulation, treatment_goals, preferred_techniques, etc.)
+- Notifications table (email/SMS alerts)
+- Appointments table (pre-session report scheduling)
+- Disclaimer logs table
+- Enhanced risk_events with alert_level
+- Automatic notification triggers
 
 3. Note your Supabase credentials:
    - Project URL
