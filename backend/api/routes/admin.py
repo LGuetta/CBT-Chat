@@ -4,7 +4,9 @@ Admin API routes - System administration and test data.
 
 from fastapi import APIRouter, HTTPException, status
 from typing import Optional
+from datetime import datetime
 
+from models.schemas import MessageRole, RiskLevel
 from utils.database import get_db
 
 
@@ -60,4 +62,53 @@ async def get_system_stats():
         "total_messages": 0,
         "active_sessions": 0,
         "flagged_events": 0
+    }
+
+
+@router.post("/test-risk-event")
+async def create_test_risk_event(
+    patient_access_code: str = "PATIENT001",
+    message: str = "I want to kill myself",
+    risk_level: RiskLevel = RiskLevel.HIGH
+):
+    """Create a sample session and high-risk event for testing dashboards."""
+
+    patient = await db.get_patient_by_access_code(patient_access_code)
+    if not patient:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Patient not found"
+        )
+
+    session = await db.create_session(
+        patient_id=patient["id"],
+        session_goal="Risk escalation test",
+        conversation_mode="adaptive"
+    )
+
+    user_message = await db.create_message(
+        session_id=session["id"],
+        role=MessageRole.USER.value,
+        content=message,
+        created_at=datetime.utcnow().isoformat(),
+        risk_level=risk_level.value
+    )
+
+    risk_event = await db.create_risk_event(
+        session_id=session["id"],
+        patient_id=patient["id"],
+        message_id=user_message["id"],
+        risk_level=risk_level.value,
+        alert_level="critical" if risk_level == RiskLevel.HIGH else "high",
+        risk_type="manual_test_event",
+        detected_keywords=["manual_seed"],
+        full_message_content=message,
+        ai_reasoning="Generated via /api/admin/test-risk-event endpoint for manual QA."
+    )
+
+    return {
+        "status": "success",
+        "session_id": session["id"],
+        "risk_event_id": risk_event["id"],
+        "message": "Test risk event created. Use therapist dashboard to verify visibility."
     }

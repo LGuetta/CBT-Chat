@@ -11,6 +11,9 @@ import {
   SessionTranscript,
   PatientOverview,
   SkillCompletion,
+  PatientDetails,
+  TherapistBrief,
+  PatientWithBrief,
 } from "@/types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -26,6 +29,32 @@ class APIClient {
       },
       timeout: 30000,
     });
+
+    // Add request interceptor for debugging
+    this.client.interceptors.request.use(
+      (config) => {
+        console.log(`[API] ${config.method?.toUpperCase()} ${config.url}`);
+        return config;
+      },
+      (error) => {
+        console.error("[API] Request error:", error);
+        return Promise.reject(error);
+      }
+    );
+
+    // Add response interceptor for error handling
+    this.client.interceptors.response.use(
+      (response) => response,
+      (error) => {
+        console.error("[API] Response error:", {
+          url: error.config?.url,
+          status: error.response?.status,
+          data: error.response?.data,
+          message: error.message,
+        });
+        return Promise.reject(error);
+      }
+    );
   }
 
   // ============================================================================
@@ -127,6 +156,34 @@ class APIClient {
           skill_type: skillType,
           limit,
         },
+      }
+    );
+    return response.data;
+  }
+
+  async getPatientDetails(
+    patientId: string,
+    therapistEmail: string
+  ): Promise<PatientDetails> {
+    const response = await this.client.get(
+      `/api/therapist/patient/${patientId}/details`,
+      {
+        params: { therapist_email: therapistEmail },
+      }
+    );
+    return response.data;
+  }
+
+  async updatePatientBrief(
+    patientId: string,
+    therapistEmail: string,
+    brief: TherapistBrief
+  ): Promise<PatientWithBrief> {
+    const response = await this.client.put(
+      `/api/therapist/patient/${patientId}/brief`,
+      { brief },
+      {
+        params: { therapist_email: therapistEmail },
       }
     );
     return response.data;

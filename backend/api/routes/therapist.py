@@ -8,6 +8,7 @@ from typing import List, Optional
 import io
 import json
 import csv
+import logging
 from datetime import datetime, timedelta
 
 from models.schemas import (
@@ -18,7 +19,10 @@ from models.schemas import (
     SessionResponse,
     MessageResponse,
     SkillCompletionResponse,
-    SessionSummaryResponse
+    SessionSummaryResponse,
+    PatientDetailsResponse,
+    PatientWithBrief,
+    UpdateTherapistBriefRequest,
 )
 from utils.database import get_db
 
@@ -43,20 +47,92 @@ async def get_dashboard(therapist_email: str):
         )
 
     # Get dashboard data
-    dashboard_data = await db.get_therapist_dashboard(therapist["id"])
+    try:
+        dashboard_data = await db.get_therapist_dashboard(therapist["id"])
+        logging.info(f"DEBUG: Dashboard data received for therapist {therapist['id']}: patients={len(dashboard_data.get('patients', []))}, flags={len(dashboard_data.get('recent_flags', []))}")
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        logging.error(f"DEBUG: Error in get_therapist_dashboard: {error_trace}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching dashboard data: {str(e)}"
+        )
 
-    patients = [PatientOverview(**p) for p in dashboard_data["patients"]]
-    recent_flags = [RiskEventResponse(**f) for f in dashboard_data["recent_flags"]]
+    # Normalize patient data - ensure all required fields exist and handle nulls
+    patients: List[PatientOverview] = []
+    for p in dashboard_data.get("patients", []):
+        try:
+            # Ensure all required fields have defaults if null
+            patient_data = {
+                "patient_id": p.get("patient_id", ""),
+                "preferred_name": p.get("preferred_name"),
+                "access_code": p.get("access_code", ""),
+                "total_sessions": int(p.get("total_sessions", 0) or 0),
+                "flagged_sessions": int(p.get("flagged_sessions", 0) or 0),
+                "last_session_date": p.get("last_session_date"),
+                "last_flag_date": p.get("last_flag_date") or p.get("last_high_risk_date"),  # Fallback to last_high_risk_date
+                "unreviewed_risk_events": int(p.get("unreviewed_risk_events", 0) or 0),
+            }
+            logging.debug(f"DEBUG: Processing patient data: {patient_data}")
+            patients.append(PatientOverview(**patient_data))
+        except Exception as e:
+            # Log but continue - don't fail entire dashboard if one patient has bad data
+            import traceback
+            logging.error(f"Error parsing patient data: {e}, patient: {p}, traceback: {traceback.format_exc()}")
+            continue
+
+    # Normalize risk flags - handle field mapping
+    recent_flags_raw = dashboard_data.get("recent_flags", [])
+    recent_flags: List[RiskEventResponse] = []
+    for flag in recent_flags_raw:
+        try:
+            flag_data = flag.copy()
+            # Map risk_event_id to id if needed
+            if "risk_event_id" in flag_data and "id" not in flag_data:
+                flag_data["id"] = flag_data.pop("risk_event_id")
+            # Ensure required fields
+            if "id" not in flag_data:
+                logging.warning(f"DEBUG: Skipping flag without id: {flag_data}")
+                continue  # Skip invalid flags
+            # Ensure risk_level is valid
+            if "risk_level" not in flag_data:
+                logging.warning(f"DEBUG: Skipping flag without risk_level: {flag_data}")
+                continue
+            # Ensure detected_keywords is a list
+            if "detected_keywords" not in flag_data:
+                flag_data["detected_keywords"] = []
+            elif not isinstance(flag_data["detected_keywords"], list):
+                flag_data["detected_keywords"] = []
+            logging.debug(f"DEBUG: Processing risk flag: {flag_data}")
+            recent_flags.append(RiskEventResponse(**flag_data))
+        except Exception as e:
+            # Log but continue - don't fail entire dashboard if one flag has bad data
+            import traceback
+            logging.error(f"Error parsing risk flag: {e}, flag: {flag}, traceback: {traceback.format_exc()}")
+            continue
 
     total_unreviewed = sum(p.unreviewed_risk_events for p in patients)
 
-    return TherapistDashboardResponse(
-        therapist_id=therapist["id"],
-        therapist_name=therapist["name"],
-        patients=patients,
-        total_unreviewed_flags=total_unreviewed,
-        recent_flags=recent_flags
-    )
+    logging.info(f"DEBUG: Returning dashboard with {len(patients)} patients, {len(recent_flags)} flags, {total_unreviewed} unreviewed")
+
+    try:
+        response = TherapistDashboardResponse(
+            therapist_id=therapist["id"],
+            therapist_name=therapist["name"],
+            patients=patients,
+            total_unreviewed_flags=total_unreviewed,
+            recent_flags=recent_flags
+        )
+        logging.info("DEBUG: Dashboard response created successfully")
+        return response
+    except Exception as e:
+        import traceback
+        logging.error(f"DEBUG: Error creating TherapistDashboardResponse: {e}, traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error creating dashboard response: {str(e)}"
+        )
 
 
 @router.get("/session/{session_id}/transcript", response_model=SessionTranscriptResponse)
@@ -162,6 +238,84 @@ async def get_patient_skills(
     )
 
     return [SkillCompletionResponse(**s) for s in skills]
+
+
+@router.get("/patient/{patient_id}/details", response_model=PatientDetailsResponse)
+async def get_patient_details(
+    patient_id: str,
+    therapist_email: str = Query(...)
+):
+    """Get patient profile with sessions and risk history."""
+
+    therapist = await db.get_therapist_by_email(therapist_email)
+    if not therapist:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Therapist not found"
+        )
+
+    patients = await db.get_therapist_patients(therapist["id"])
+    patient_ids = [p["patients"]["id"] for p in patients]
+
+    if patient_id not in patient_ids:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized"
+        )
+
+    details = await db.get_patient_details(patient_id)
+
+    if not details["patient"]:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Patient not found"
+        )
+
+    return PatientDetailsResponse(
+        patient=PatientWithBrief(**details["patient"]),
+        recent_sessions=[SessionResponse(**s) for s in details["sessions"]],
+        recent_risk_events=[RiskEventResponse(**r) for r in details["risk_events"]]
+    )
+
+
+@router.put("/patient/{patient_id}/brief", response_model=PatientWithBrief)
+async def update_patient_brief(
+    patient_id: str,
+    request: UpdateTherapistBriefRequest,
+    therapist_email: str = Query(...)
+):
+    """Update therapist brief configuration for a patient."""
+
+    therapist = await db.get_therapist_by_email(therapist_email)
+    if not therapist:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Therapist not found"
+        )
+
+    patients = await db.get_therapist_patients(therapist["id"])
+    patient_ids = [p["patients"]["id"] for p in patients]
+
+    if patient_id not in patient_ids:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized"
+        )
+
+    brief_payload = request.brief.model_dump()
+    updated_patient = await db.update_therapist_brief(
+        patient_id,
+        case_formulation=brief_payload.get("case_formulation"),
+        presenting_problems=brief_payload.get("presenting_problems"),
+        treatment_goals=brief_payload.get("treatment_goals"),
+        therapy_stage=brief_payload.get("therapy_stage"),
+        preferred_techniques=brief_payload.get("preferred_techniques"),
+        sensitivities=brief_payload.get("sensitivities"),
+        therapist_language=brief_payload.get("therapist_language"),
+        contraindications=brief_payload.get("contraindications"),
+    )
+
+    return PatientWithBrief(**updated_patient)
 
 
 @router.post("/risk-event/{risk_event_id}/review")

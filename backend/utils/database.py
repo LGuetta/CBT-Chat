@@ -43,6 +43,30 @@ class Database:
         response = self.client.table("patients").insert(data).execute()
         return response.data[0]
 
+    async def get_patient_by_id(self, patient_id: str) -> Optional[Dict]:
+        """Get patient by ID."""
+        response = self.client.table("patients").select("*").eq(
+            "id", patient_id
+        ).single().execute()
+
+        return response.data if response.data else None
+
+    async def get_patient_details(self, patient_id: str) -> Dict:
+        """Fetch patient record with recent sessions and risk events."""
+        patient = await self.get_patient_by_id(patient_id)
+
+        sessions = await self.get_patient_sessions(patient_id, limit=20)
+
+        risk_events_response = self.client.table("risk_events").select("*").eq(
+            "patient_id", patient_id
+        ).order("created_at", desc=True).limit(20).execute()
+
+        return {
+            "patient": patient,
+            "sessions": sessions,
+            "risk_events": risk_events_response.data
+        }
+
     # ========================================================================
     # SESSION OPERATIONS
     # ========================================================================
@@ -50,14 +74,16 @@ class Database:
     async def create_session(
         self,
         patient_id: str,
-        session_goal: Optional[str] = None
+        session_goal: Optional[str] = None,
+        conversation_mode: Optional[str] = "adaptive"
     ) -> Dict:
         """Create a new chat session."""
         data = {
             "patient_id": patient_id,
             "session_goal": session_goal,
             "status": "active",
-            "current_state": "consent"
+            "current_state": "menu",
+            "conversation_mode": conversation_mode
         }
         response = self.client.table("sessions").insert(data).execute()
         return response.data[0]
@@ -323,6 +349,144 @@ class Database:
         ).eq("therapist_id", therapist_id).eq("is_active", True).execute()
 
         return response.data
+
+    # ========================================================================
+    # OPZIONE C - NEW METHODS
+    # ========================================================================
+
+    async def create_disclaimer_log(
+        self,
+        session_id: str,
+        patient_id: str,
+        disclaimer_type: str,
+        content: str,
+        triggered_by: str,
+        **kwargs
+    ) -> Dict:
+        """Create a disclaimer log entry."""
+        data = {
+            "session_id": session_id,
+            "patient_id": patient_id,
+            "disclaimer_type": disclaimer_type,
+            "content": content,
+            "triggered_by": triggered_by,
+            **kwargs
+        }
+        response = self.client.table("disclaimer_logs").insert(data).execute()
+        return response.data[0]
+
+    async def get_patient_disclaimer_logs(
+        self,
+        patient_id: str,
+        limit: int = 20
+    ) -> List[Dict]:
+        """Get disclaimer logs for a patient."""
+        response = self.client.table("disclaimer_logs").select("*").eq(
+            "patient_id", patient_id
+        ).order("created_at", desc=True).limit(limit).execute()
+
+        return response.data
+
+    async def create_notification(
+        self,
+        therapist_id: str,
+        notification_type: str,
+        priority: str,
+        subject: str,
+        message_body: str,
+        **kwargs
+    ) -> Dict:
+        """Create a notification for a therapist."""
+        data = {
+            "therapist_id": therapist_id,
+            "notification_type": notification_type,
+            "priority": priority,
+            "subject": subject,
+            "message_body": message_body,
+            **kwargs
+        }
+        response = self.client.table("notifications").insert(data).execute()
+        return response.data[0]
+
+    async def get_therapist_notifications(
+        self,
+        therapist_id: str,
+        unread_only: bool = False,
+        limit: int = 50
+    ) -> List[Dict]:
+        """Get notifications for a therapist."""
+        query = self.client.table("notifications").select("*").eq(
+            "therapist_id", therapist_id
+        )
+
+        if unread_only:
+            query = query.eq("read", False)
+
+        response = query.order("created_at", desc=True).limit(limit).execute()
+
+        return response.data
+
+    async def mark_notification_read(
+        self,
+        notification_id: str
+    ) -> Dict:
+        """Mark a notification as read."""
+        response = self.client.table("notifications").update({
+            "read": True,
+            "read_at": datetime.utcnow().isoformat()
+        }).eq("id", notification_id).execute()
+
+        return response.data[0]
+
+    async def create_appointment(
+        self,
+        therapist_id: str,
+        patient_id: str,
+        scheduled_at: datetime,
+        **kwargs
+    ) -> Dict:
+        """Create an appointment."""
+        data = {
+            "therapist_id": therapist_id,
+            "patient_id": patient_id,
+            "scheduled_at": scheduled_at.isoformat() if isinstance(scheduled_at, datetime) else scheduled_at,
+            **kwargs
+        }
+        response = self.client.table("appointments").insert(data).execute()
+        return response.data[0]
+
+    async def get_upcoming_appointments(
+        self,
+        therapist_id: Optional[str] = None,
+        hours_ahead: int = 24
+    ) -> List[Dict]:
+        """Get appointments within specified hours."""
+        from datetime import timedelta
+
+        now = datetime.utcnow()
+        cutoff = now + timedelta(hours=hours_ahead)
+
+        query = self.client.table("appointments").select("*").gte(
+            "scheduled_at", now.isoformat()
+        ).lte("scheduled_at", cutoff.isoformat()).eq("status", "scheduled")
+
+        if therapist_id:
+            query = query.eq("therapist_id", therapist_id)
+
+        response = query.execute()
+        return response.data
+
+    async def update_therapist_brief(
+        self,
+        patient_id: str,
+        **brief_fields
+    ) -> Dict:
+        """Update therapist brief fields for a patient."""
+        response = self.client.table("patients").update(brief_fields).eq(
+            "id", patient_id
+        ).execute()
+
+        return response.data[0]
 
 
 # Global database instance
