@@ -1,9 +1,11 @@
 """
 Chat API routes - Patient-facing endpoints for CBT conversations.
+Opzione C: Uses adaptive ConversationManager instead of rigid state machine.
 """
 
 from fastapi import APIRouter, HTTPException, status
-from typing import List
+from typing import List, Optional
+import yaml
 
 from models.schemas import (
     ChatMessageRequest,
@@ -13,23 +15,48 @@ from models.schemas import (
     SessionResponse,
     MessageResponse,
     MessageRole,
-    ConversationContext,
-    ConversationState,
-    RiskLevel
+    AdaptiveConversationContext,
+    TherapistBrief,
+    PreferredTechniques,
+    ClinicalSensitivities,
+    TherapistLanguage,
+    RiskLevel,
+    DistressLevel,
+    ConversationMode,
+    DisclaimerType,
+    AlertLevel,
 )
-from services.state_machine import get_state_machine
-from services.risk_detector import get_risk_detector
-from services.llm_service import get_llm_service
+from services.conversation_manager import ConversationManager
+from services.risk_detector import RiskDetector
+from services.distress_assessor import DistressAssessor
+from services.llm_service import LLMService
 from utils.database import get_db
-from utils.prompts import get_prompts
 from datetime import datetime
 
 
 router = APIRouter()
-state_machine = get_state_machine()
-risk_detector = get_risk_detector()
+
+# Initialize services
+llm_service = LLMService()
+risk_detector = RiskDetector(llm_service=llm_service)
+distress_assessor = DistressAssessor(llm_service=llm_service)
+
+# Load base prompt from prompts.yaml
+def load_base_prompt() -> str:
+    """Load base prompt from prompts.yaml"""
+    with open("config/prompts.yaml", "r") as f:
+        prompts = yaml.safe_load(f)
+    return prompts["system_prompts"]["base"]
+
+base_prompt = load_base_prompt()
+conversation_manager = ConversationManager(
+    llm_service=llm_service,
+    risk_detector=risk_detector,
+    distress_assessor=distress_assessor,
+    base_prompt=base_prompt
+)
+
 db = get_db()
-prompts = get_prompts()
 
 
 @router.post("/session/create", response_model=SessionResponse)
@@ -45,10 +72,31 @@ async def create_session(request: CreateSessionRequest):
             detail="Invalid access code"
         )
 
-    # Create session
+    # Create session with adaptive conversation mode
     session = await db.create_session(
         patient_id=patient["id"],
-        session_goal=request.session_goal
+        session_goal=request.session_goal,
+        conversation_mode=ConversationMode.ADAPTIVE.value  # Opzione C
+    )
+
+    # Show initial disclaimer
+    disclaimer_content = """Welcome! I'm here to help you practice CBT skills between therapy sessions.
+
+**Important to know:**
+- I'm a skills practice tool, not a therapist
+- I can't provide diagnosis, treatment decisions, or crisis support
+- If you're in crisis, please contact emergency services or a crisis helpline
+- The insights you discover here are valuable to share with your therapist
+
+Ready to get started?"""
+
+    # Log disclaimer
+    await db.create_disclaimer_log(
+        session_id=session["id"],
+        patient_id=patient["id"],
+        disclaimer_type=DisclaimerType.INITIAL_CONSENT.value,
+        content=disclaimer_content,
+        triggered_by="session_start"
     )
 
     return SessionResponse(**session)
@@ -58,7 +106,7 @@ async def create_session(request: CreateSessionRequest):
 async def send_message(request: ChatMessageRequest):
     """
     Send a message in a chat session.
-    Main endpoint for patient-assistant interaction.
+    Main endpoint for patient-assistant interaction using adaptive ConversationManager.
     """
 
     # Verify patient
@@ -81,218 +129,183 @@ async def send_message(request: ChatMessageRequest):
     else:
         # Create new session
         session = await db.create_session(
-            patient_id=patient["id"]
+            patient_id=patient["id"],
+            conversation_mode=ConversationMode.ADAPTIVE.value
         )
 
-    # Check if session is ended or flagged
-    if session["status"] in ["terminated", "flagged"]:
+    # Check if session is ended or terminated
+    if session["status"] in ["terminated"]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Session is {session['status']}. Please start a new session."
         )
 
-    # Save user message
-    user_msg = await db.create_message(
-        session_id=session["id"],
-        role="user",
-        content=request.message
-    )
+    # Load therapist brief for this patient
+    therapist_brief = await _load_therapist_brief(patient)
 
-    # STEP 1: Risk Detection
+    # Build conversation context
     conversation_history = await db.get_session_messages(session["id"])
-    history_for_risk = [
+    history_formatted = [
         {"role": msg["role"], "content": msg["content"]}
-        for msg in conversation_history[-10:]  # Last 10 messages
+        for msg in conversation_history
     ]
 
-    risk_result = await risk_detector.detect_risk(
-        message=request.message,
-        conversation_history=history_for_risk
-    )
-
-    # Update message with risk data
-    await db.create_message(
-        session_id=session["id"],
-        role="user",
-        content=request.message,
-        risk_scan_performed=True,
-        risk_level=risk_result.risk_level.value,
-        risk_keywords=risk_result.triggers
-    )
-
-    # Handle HIGH risk - escalate immediately
-    if risk_result.risk_level == RiskLevel.HIGH:
-        # Create risk event
-        await db.create_risk_event(
-            session_id=session["id"],
-            patient_id=patient["id"],
-            message_id=user_msg["id"],
-            risk_level="high",
-            risk_type="acute_risk",
-            detected_keywords=risk_result.triggers,
-            full_message_content=request.message,
-            ai_reasoning=risk_result.reasoning,
-            confidence_score=risk_result.confidence_score,
-            escalation_flow_triggered=True,
-            session_terminated=True,
-            resources_provided=True
-        )
-
-        # Update session status
-        await db.update_session(
-            session_id=session["id"],
-            status="flagged",
-            risk_level="high",
-            risk_flagged=True
-        )
-
-        # Generate crisis response
-        crisis_response = await _generate_crisis_response(patient.get("country_code", "US"))
-
-        crisis_msg = await db.create_message(
-            session_id=session["id"],
-            role="assistant",
-            content=crisis_response
-        )
-
-        return ChatResponse(
-            session_id=session["id"],
-            message=MessageResponse(**crisis_msg),
-            session_status="flagged",
-            current_state=ConversationState.ENDED,
-            risk_detected=True,
-            risk_level=RiskLevel.HIGH,
-            should_end_session=True,
-            resources=prompts.get_crisis_resources(patient.get("country_code", "US"))
-        )
-
-    # Handle MEDIUM risk - provide resources but continue with caution
-    if risk_result.risk_level == RiskLevel.MEDIUM:
-        await db.create_risk_event(
-            session_id=session["id"],
-            patient_id=patient["id"],
-            message_id=user_msg["id"],
-            risk_level="medium",
-            risk_type="concerning_content",
-            detected_keywords=risk_result.triggers,
-            full_message_content=request.message,
-            ai_reasoning=risk_result.reasoning,
-            confidence_score=risk_result.confidence_score
-        )
-
-        # Add supportive message with resources
-        medium_risk_message = prompts.get_risk_escalation_message("medium_response")
-        medium_risk_message = prompts.format_with_resources(
-            medium_risk_message,
-            patient.get("country_code", "US")
-        )
-
-        await db.create_message(
-            session_id=session["id"],
-            role="assistant",
-            content=medium_risk_message
-        )
-
-    # STEP 2: Build conversation context
-    messages = await db.get_session_messages(session["id"])
-
-    context = ConversationContext(
+    context = AdaptiveConversationContext(
         session_id=session["id"],
         patient_id=patient["id"],
-        current_state=ConversationState(session["current_state"]),
-        current_skill=session.get("current_skill"),
-        current_step=session.get("current_step"),
+        current_state=session.get("current_state", "menu"),
         session_goal=session.get("session_goal"),
         user_name=patient.get("preferred_name"),
         country_code=patient.get("country_code", "US"),
-        history=[
-            {"role": msg["role"], "content": msg["content"]}
-            for msg in messages
-        ],
-        state_data=session.get("state_data", {}),
-        risk_level=risk_result.risk_level
+        history=history_formatted,
+        therapist_brief=therapist_brief,
+        conversation_mode=ConversationMode.ADAPTIVE,
+        distress_level=DistressLevel(session.get("distress_level", "none")),
+        grounding_count=session.get("grounding_count", 0),
+        disclaimer_shown_count=session.get("disclaimer_shown_count", 0),
+        last_disclaimer_at=session.get("last_disclaimer_at")
     )
 
-    # STEP 3: Process message through state machine
-    assistant_response, updated_context = await state_machine.process_message(
+    # HANDLE MESSAGE with ConversationManager
+    result = await conversation_manager.handle_message(
+        message=request.message,
         context=context,
-        user_message=request.message
+        therapist_brief=therapist_brief
     )
 
-    # STEP 4: Save assistant response
+    # Save user message to database
+    user_msg = await db.create_message(
+        session_id=session["id"],
+        role=MessageRole.USER.value,
+        content=request.message,
+        risk_scan_performed=True,
+        risk_level=result["risk_detection"]["level"],
+        risk_keywords=result["risk_detection"]["triggers"]
+    )
+
+    # Save assistant response to database
     assistant_msg = await db.create_message(
         session_id=session["id"],
-        role="assistant",
-        content=assistant_response
+        role=MessageRole.ASSISTANT.value,
+        content=result["response"],
+        model_used=result.get("model_used", "deepseek-chat"),
+        tokens_used=result.get("tokens_used"),
     )
 
-    # STEP 5: Update session state
+    # Handle risk events
+    if result["risk_detection"]["should_escalate"]:
+        risk_level = result["risk_detection"]["level"]
+
+        # Determine alert level
+        alert_level = AlertLevel.HIGH if risk_level == "high" else AlertLevel.MEDIUM
+
+        # Create risk event
+        risk_event = await db.create_risk_event(
+            session_id=session["id"],
+            patient_id=patient["id"],
+            message_id=user_msg["id"],
+            risk_level=risk_level,
+            alert_level=alert_level.value,
+            risk_type="detected_by_conversation_manager",
+            detected_keywords=result["risk_detection"]["triggers"],
+            full_message_content=request.message,
+            ai_reasoning=result["risk_detection"]["reasoning"],
+            escalation_flow_triggered=True,
+            session_terminated=result.get("should_end_session", False),
+            resources_provided=result.get("should_end_session", False),
+            patient_state_at_event={
+                "distress_level": result["distress_assessment"]["level"],
+                "signals_detected": result["distress_assessment"]["signals_detected"]
+            }
+        )
+
+        # Notification will be created automatically by database trigger
+
+    # Update session with new state
     await db.update_session(
         session_id=session["id"],
-        current_state=updated_context.current_state.value,
-        current_skill=updated_context.current_skill.value if updated_context.current_skill else None,
-        current_step=updated_context.current_step,
-        session_goal=updated_context.session_goal
+        distress_level=result["distress_assessment"]["level"],
+        grounding_performed=result.get("grounding_offered", False),
+        grounding_count=context.grounding_count,
+        disclaimer_shown_count=context.disclaimer_shown_count,
+        last_disclaimer_at=context.last_disclaimer_at,
+        risk_level=result["risk_detection"]["level"],
+        risk_flagged=result["risk_detection"]["should_escalate"],
+        status="flagged" if result.get("should_end_session") else session["status"]
     )
 
-    # Return response
+    # Log disclaimer if shown
+    if result.get("disclaimer_shown"):
+        await db.create_disclaimer_log(
+            session_id=session["id"],
+            patient_id=patient["id"],
+            disclaimer_type=result["disclaimer_type"],
+            content="Disclaimer shown in response",
+            triggered_by=f"message_count_{len(history_formatted) // 2}"
+        )
+
+    # Build response
     return ChatResponse(
         session_id=session["id"],
-        message=MessageResponse(**assistant_msg),
+        message=MessageResponse(
+            id=assistant_msg["id"],
+            role=MessageRole.ASSISTANT,
+            content=result["response"],
+            created_at=assistant_msg["created_at"],
+            risk_level=RiskLevel(result["risk_detection"]["level"])
+        ),
         session_status=session["status"],
-        current_state=updated_context.current_state,
-        risk_detected=risk_result.risk_level != RiskLevel.NONE,
-        risk_level=risk_result.risk_level,
-        should_end_session=False
+        current_state=session.get("current_state", "menu"),
+        risk_detected=result["risk_detection"]["should_escalate"],
+        risk_level=RiskLevel(result["risk_detection"]["level"]),
+        should_end_session=result.get("should_end_session", False),
+        resources=_get_crisis_resources(patient.get("country_code", "US")) if result.get("should_end_session") else None
     )
 
 
-@router.post("/session/end")
+@router.post("/session/end", response_model=SessionResponse)
 async def end_session(request: EndSessionRequest):
     """End a chat session."""
 
-    # Verify patient owns this session
-    session = await db.get_session(request.session_id)
-
-    if not session:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Session not found"
-        )
-
+    # Verify patient
     patient = await db.get_patient_by_access_code(request.patient_access_code)
-
-    if not patient or session["patient_id"] != patient["id"]:
+    if not patient:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invalid access code"
         )
 
-    # End session
-    await db.end_session(request.session_id)
-
-    return {"status": "success", "message": "Session ended"}
-
-
-@router.get("/session/{session_id}/history", response_model=List[MessageResponse])
-async def get_session_history(session_id: str, access_code: str):
-    """Get message history for a session."""
-
-    # Verify access
-    session = await db.get_session(session_id)
+    # Get session
+    session = await db.get_session(request.session_id)
     if not session:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found"
         )
 
-    patient = await db.get_patient_by_access_code(access_code)
-    if not patient or session["patient_id"] != patient["id"]:
+    # Update session
+    await db.update_session(
+        session_id=session["id"],
+        status="completed",
+        ended_at=datetime.now()
+    )
+
+    return SessionResponse(**session)
+
+
+@router.get("/session/{session_id}/messages", response_model=List[MessageResponse])
+async def get_session_messages(session_id: str, patient_access_code: str):
+    """Get all messages in a session."""
+
+    # Verify patient
+    patient = await db.get_patient_by_access_code(patient_access_code)
+    if not patient:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invalid access code"
         )
 
+    # Get messages
     messages = await db.get_session_messages(session_id)
 
     return [MessageResponse(**msg) for msg in messages]
@@ -300,13 +313,18 @@ async def get_session_history(session_id: str, access_code: str):
 
 @router.post("/prompts/reload")
 async def reload_prompts():
-    """
-    Reload prompts from YAML file without restarting server.
-    Useful for iterating on prompt templates.
-    """
+    """Reload prompts from prompts.yaml without restarting server."""
+    global base_prompt, conversation_manager
+
     try:
-        prompts.reload()
-        return {"status": "success", "message": "Prompts reloaded"}
+        base_prompt = load_base_prompt()
+        conversation_manager.base_prompt = base_prompt
+
+        return {
+            "status": "success",
+            "message": "Prompts reloaded successfully",
+            "timestamp": datetime.now().isoformat()
+        }
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -318,21 +336,57 @@ async def reload_prompts():
 # HELPER FUNCTIONS
 # ============================================================================
 
-async def _generate_crisis_response(country_code: str) -> str:
-    """Generate crisis intervention response."""
+async def _load_therapist_brief(patient: dict) -> Optional[TherapistBrief]:
+    """
+    Load therapist brief for patient from database.
 
-    resources = prompts.get_crisis_resources(country_code)
+    Returns None if no brief configured (patient will use default CBT approach).
+    """
+    if not patient.get("case_formulation"):
+        return None
 
-    clarify_msg = prompts.get_risk_escalation_message("clarify")
-    ground_msg = prompts.get_risk_escalation_message("ground_high")
-    resources_msg = prompts.get_risk_escalation_message("resources")
-    stop_msg = prompts.get_risk_escalation_message("stop_message")
+    # Build TherapistBrief from patient data
+    brief = TherapistBrief(
+        case_formulation=patient.get("case_formulation"),
+        presenting_problems=patient.get("presenting_problems", []),
+        treatment_goals=patient.get("treatment_goals", []),
+        therapy_stage=patient.get("therapy_stage", "early"),
+        preferred_techniques=PreferredTechniques(
+            **(patient.get("preferred_techniques", {}))
+        ) if patient.get("preferred_techniques") else PreferredTechniques(),
+        sensitivities=ClinicalSensitivities(
+            **(patient.get("sensitivities", {}))
+        ) if patient.get("sensitivities") else ClinicalSensitivities(),
+        therapist_language=TherapistLanguage(
+            **(patient.get("therapist_language", {}))
+        ) if patient.get("therapist_language") else TherapistLanguage(),
+        contraindications=patient.get("contraindications", [])
+    )
 
-    full_message = "\n\n".join([
-        clarify_msg,
-        ground_msg,
-        resources_msg.format(**resources),
-        stop_msg
-    ])
+    return brief
 
-    return full_message
+
+def _get_crisis_resources(country_code: str) -> dict:
+    """Get country-specific crisis resources."""
+    resources_map = {
+        "US": {
+            "hotline": "988 Suicide & Crisis Lifeline",
+            "phone": "988",
+            "text": "Text 'HELLO' to 741741",
+            "emergency": "911"
+        },
+        "UK": {
+            "hotline": "Samaritans",
+            "phone": "116 123",
+            "text": "Text 'SHOUT' to 85258",
+            "emergency": "999"
+        },
+        "IT": {
+            "hotline": "Telefono Amico",
+            "phone": "02 2327 2327",
+            "text": "Telefono Azzurro: 19696",
+            "emergency": "112"
+        },
+    }
+
+    return resources_map.get(country_code, resources_map["US"])
