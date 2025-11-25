@@ -1,5 +1,6 @@
 /**
  * TypeScript types for CBT Chat Assistant frontend
+ * Updated for Opzione C - Adaptive Conversation System
  */
 
 export enum RiskLevel {
@@ -7,6 +8,21 @@ export enum RiskLevel {
   LOW = "low",
   MEDIUM = "medium",
   HIGH = "high",
+}
+
+export enum AlertLevel {
+  LOW = "low",
+  MEDIUM = "medium",
+  HIGH = "high",
+  CRITICAL = "critical",
+}
+
+export enum DistressLevel {
+  NONE = "none",
+  MILD = "mild",
+  MODERATE = "moderate",
+  SEVERE = "severe",
+  CRISIS = "crisis",
 }
 
 export enum SessionStatus {
@@ -35,12 +51,31 @@ export enum ConversationState {
   ENDED = "ended",
 }
 
+export enum NotificationType {
+  RISK_ALERT = "risk_alert",
+  DAILY_SUMMARY = "daily_summary",
+  WEEKLY_SUMMARY = "weekly_summary",
+  PRE_SESSION_REPORT = "pre_session_report",
+  PATIENT_MESSAGE = "patient_message",
+}
+
+export enum NotificationPriority {
+  LOW = "low",
+  NORMAL = "normal",
+  HIGH = "high",
+  CRITICAL = "critical",
+}
+
 export interface Message {
   id: string;
   role: MessageRole;
   content: string;
   created_at: string;
   risk_level?: RiskLevel;
+  // Opzione C metadata
+  distress_level?: DistressLevel;
+  is_grounding_exercise?: boolean;
+  is_disclaimer?: boolean;
 }
 
 export interface Session {
@@ -68,6 +103,13 @@ export interface ChatResponse {
   risk_level: RiskLevel;
   should_end_session: boolean;
   resources?: Record<string, string>;
+  // Opzione C additions
+  distress_level?: DistressLevel;
+  distress_reasoning?: string;
+  grounding_offered?: boolean;
+  grounding_technique?: string;
+  disclaimer_shown?: boolean;
+  conversation_mode?: string; // "grounding", "cbt_skill", "clarification", etc.
 }
 
 export interface RiskEvent {
@@ -79,6 +121,41 @@ export interface RiskEvent {
   detected_keywords: string[];
   created_at: string;
   therapist_reviewed: boolean;
+  // Opzione C additions
+  alert_level?: AlertLevel;
+  notification_sent?: boolean;
+  patient_state_at_event?: {
+    distress_level: DistressLevel;
+    signals_detected: string[];
+  };
+}
+
+export interface Notification {
+  id: string;
+  therapist_id: string;
+  notification_type: NotificationType;
+  priority: NotificationPriority;
+  patient_id?: string;
+  session_id?: string;
+  subject: string;
+  message_body: string;
+  email_sent: boolean;
+  sms_sent: boolean;
+  read: boolean;
+  created_at: string;
+}
+
+export interface Appointment {
+  id: string;
+  therapist_id: string;
+  patient_id: string;
+  scheduled_at: string;
+  duration_minutes: number;
+  appointment_type: string;
+  report_generated: boolean;
+  report_sent: boolean;
+  status: string;
+  created_at: string;
 }
 
 export interface SkillCompletion {
@@ -101,6 +178,13 @@ export interface PatientOverview {
   last_session_date?: string;
   last_flag_date?: string;
   unreviewed_risk_events: number;
+  // Opzione C additions
+  therapy_stage?: string; // "early", "middle", "late"
+  case_formulation?: string;
+  critical_alerts?: number;
+  unread_notifications?: number;
+  next_appointment_at?: string;
+  last_high_risk_date?: string;
 }
 
 export interface TherapistDashboard {
@@ -109,6 +193,11 @@ export interface TherapistDashboard {
   patients: PatientOverview[];
   total_unreviewed_flags: number;
   recent_flags: RiskEvent[];
+  // Opzione C additions
+  total_critical_alerts?: number;
+  unread_notifications?: number;
+  upcoming_appointments?: Appointment[];
+  notifications?: Notification[];
 }
 
 export interface SessionTranscript {
