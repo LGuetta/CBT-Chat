@@ -133,6 +133,7 @@ export interface Session {
   current_state: ConversationState;
   current_skill?: string;
   session_goal?: string;
+  ai_summary?: string;
   risk_flagged: boolean;
   risk_level: RiskLevel;
   started_at: string;

@@ -374,6 +374,10 @@ export default function ChatPage() {
       {/* Input */}
       <div className="bg-white border-t border-gray-200 px-6 py-4">
         <div className="max-w-3xl mx-auto">
+          <p className="text-xs text-gray-500 mb-3">
+            You are interacting with a conversational AI agent. Responses are automated,
+            informational, and do not replace professional clinical care.
+          </p>
           {sessionEnded ? (
             <div className="text-center py-4">
               <p className="text-gray-600 mb-4">

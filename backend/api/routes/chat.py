@@ -6,6 +6,7 @@ Opzione C: Uses adaptive ConversationManager instead of rigid state machine.
 from fastapi import APIRouter, HTTPException, status
 from typing import List, Optional
 import yaml
+import logging
 
 from models.schemas import (
     ChatMessageRequest,
@@ -221,6 +222,11 @@ async def send_message(request: ChatMessageRequest):
 
         # Notification will be created automatically by database trigger
 
+
+    # If session should end (e.g., high risk), generate and persist summary
+    if result.get("should_end_session"):
+        await _easy_save_summary(session)
+
     # Update session with new state
     await db.update_session(
         session_id=session["id"],
@@ -291,6 +297,9 @@ async def end_session(request: EndSessionRequest):
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found"
         )
+
+    # Generate summary before closing the session
+    await _save_summary(session)
 
     # Update session
     await db.update_session(
@@ -399,3 +408,68 @@ def _get_crisis_resources(country_code: str) -> dict:
     }
 
     return resources_map.get(country_code, resources_map["US"])
+
+
+async def _generate_session_summary(session: dict, messages: List[dict]) -> str:
+    """
+    Generate a concise therapist-facing summary of the session using the LLM.
+    Falls back to a static message on failure.
+    """
+    try:
+        if not messages:
+            return "No conversation content available to summarize."
+
+        # Limit to recent messages to control token usage
+        recent_messages = messages[-30:]
+        transcript = "\n".join(
+            f"{msg['role'].upper()}: {msg['content']}" for msg in recent_messages
+        )
+
+        prompt_messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are summarizing a CBT practice chat for a licensed therapist. "
+                    "Provide a brief, neutral summary (max 50 words) with: presenting themes, "
+                    "skills/exercises attempted, risk signals or safety notes. "
+                    "Do not add clinical diagnoses. Avoid speculation. Keep it concise and factual."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Session ID: {session.get('id')}\n"
+                    f"Patient ID: {session.get('patient_id')}\n\n"
+                    "Transcript (most recent messages):\n"
+                    f"{transcript}\n\n"
+                    "Write the summary now."
+                ),
+            },
+        ]
+
+        llm_result = await llm_service.generate_response(
+            messages=prompt_messages,
+            temperature=0.2,
+            max_tokens=220
+        )
+        summary_text = llm_result.content.strip()
+
+        # Enforce 50-word limit even if the model overruns
+        words = summary_text.split()
+        if len(words) > 50:
+            summary_text = " ".join(words[:50]).rstrip() + "..."
+
+        return summary_text
+    except Exception as e:
+        logger.error(f"Failed to generate session summary: {e}")
+        return "Summary unavailable due to an error during generation."
+
+
+async def _save_summary(session: dict) -> None:
+    """
+    Minimal helper: fetch messages, generate summary, and store it on the session.
+    Does not change existing status logic.
+    """
+    messages = await db.get_session_messages(session["id"])
+    summary_text = await _generate_session_summary(session, messages)
+    await db.update_session(session_id=session["id"], ai_summary=summary_text)

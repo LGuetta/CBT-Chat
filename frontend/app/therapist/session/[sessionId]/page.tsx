@@ -96,6 +96,23 @@ export default function SessionTranscriptPage() {
       </header>
 
       <main className="max-w-5xl mx-auto px-6 py-8">
+        {/* AI Summary */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-lg font-semibold text-gray-900">AI Session Summary</h2>
+            {!session.ai_summary && (
+              <span className="text-xs text-gray-500">Generated at session end</span>
+            )}
+          </div>
+          {session.ai_summary ? (
+            <p className="text-gray-800 leading-relaxed">{session.ai_summary}</p>
+          ) : (
+            <p className="text-gray-500 text-sm">
+              No AI summary available for this session yet.
+            </p>
+          )}
+        </div>
+
         {/* Risk Events */}
         {transcript.risk_events.length > 0 && (
           <div className="bg-red-50 border border-red-200 rounded-xl p-6 mb-8">

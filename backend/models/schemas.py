@@ -155,6 +155,7 @@ class SessionResponse(BaseModel):
     current_state: ConversationState
     current_skill: Optional[str] = None
     session_goal: Optional[str] = None
+    ai_summary: Optional[str] = None
     risk_flagged: bool
     risk_level: RiskLevel
     started_at: datetime
