@@ -118,6 +118,7 @@ class ChatMessageRequest(BaseModel):
     session_id: Optional[str] = None
     patient_access_code: str = Field(..., description="Patient's access code")
     message: str = Field(..., min_length=1, description="User's message")
+    country_code: str = Field(default="us", description="Country code for localized resources")
 
 
 class CreateSessionRequest(BaseModel):
@@ -261,6 +262,7 @@ class SessionTranscriptResponse(BaseModel):
     messages: List[MessageResponse]
     risk_events: List[RiskEventResponse]
     skill_completions: List[SkillCompletionResponse]
+    ai_summary: Optional[str] = None
 
 
 # ============================================================================

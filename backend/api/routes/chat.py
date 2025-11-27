@@ -247,7 +247,7 @@ async def send_message(request: ChatMessageRequest):
     # Determine resources to return to client
     resources_payload = None
     if result["risk_detection"]["should_escalate"]:
-        resources_payload = _get_crisis_resources(patient.get("country_code", "US"))
+        resources_payload = _get_crisis_resources(request.country_code)
 
     # Build response
     return ChatResponse(
@@ -378,24 +378,67 @@ async def _load_therapist_brief(patient: dict) -> Optional[TherapistBrief]:
 def _get_crisis_resources(country_code: str) -> dict:
     """Get country-specific crisis resources."""
     resources_map = {
-        "US": {
+        "us": {
             "hotline": "988 Suicide & Crisis Lifeline",
             "phone": "988",
             "text": "Text 'HELLO' to 741741",
             "emergency": "911"
         },
-        "UK": {
+        "uk": {
             "hotline": "Samaritans",
             "phone": "116 123",
             "text": "Text 'SHOUT' to 85258",
             "emergency": "999"
         },
-        "IT": {
-            "hotline": "Telefono Amico",
-            "phone": "02 2327 2327",
-            "text": "Telefono Azzurro: 19696",
+        "it": {
+            "hotline": "Telefono Amico Italia",
+            "phone": "800 86 00 22",
+            "text": "WhatsApp: 324 011 72 52",
+            "emergency": "112"
+        },
+        "de": {
+            "hotline": "Telefonseelsorge",
+            "phone": "0800 111 0 111",
+            "text": "Online: online.telefonseelsorge.de",
+            "emergency": "112"
+        },
+        "fr": {
+            "hotline": "SOS Amitié",
+            "phone": "09 72 39 40 50",
+            "text": "Fil Santé Jeunes: 0 800 235 236",
+            "emergency": "15 or 112"
+        },
+        "es": {
+            "hotline": "Teléfono de la Esperanza",
+            "phone": "717 003 717",
+            "text": "Chat: telefonodelaesperanza.org",
+            "emergency": "112"
+        },
+        "ch": {
+            "hotline": "Die Dargebotene Hand",
+            "phone": "143",
+            "text": "Pro Juventute: 147",
+            "emergency": "112"
+        },
+        "at": {
+            "hotline": "Telefonseelsorge",
+            "phone": "142",
+            "text": "Rat auf Draht: 147",
+            "emergency": "112"
+        },
+        "nl": {
+            "hotline": "113 Zelfmoordpreventie",
+            "phone": "113 or 0800-0113",
+            "text": "Chat: 113.nl",
+            "emergency": "112"
+        },
+        "be": {
+            "hotline": "Zelfmoordlijn",
+            "phone": "1813",
+            "text": "Chat: zelfmoordlijn1813.be",
             "emergency": "112"
         },
     }
 
-    return resources_map.get(country_code, resources_map["US"])
+    code = country_code.lower() if country_code else "us"
+    return resources_map.get(code, resources_map["us"])

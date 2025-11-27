@@ -130,8 +130,19 @@ export default function PatientDetailPage() {
     setSuccessMessage(null);
     setError(null);
     try {
-      await apiClient.updatePatientBrief(patientId, therapistEmail, briefForm);
-      setSuccessMessage("Therapist brief updated");
+      const updatedPatient = await apiClient.updatePatientBrief(patientId, therapistEmail, briefForm);
+      // Update the local state with the saved data
+      if (details) {
+        setDetails({
+          ...details,
+          patient: updatedPatient,
+        });
+      }
+      // Re-hydrate the form with saved data to ensure consistency
+      setBriefForm(hydrateBrief(updatedPatient.therapist_brief));
+      setSuccessMessage("Therapist brief saved successfully!");
+      // Clear success message after 3 seconds
+      setTimeout(() => setSuccessMessage(null), 3000);
     } catch (err: any) {
       setError(err.message || "Failed to update brief");
     } finally {
@@ -478,4 +489,9 @@ export default function PatientDetailPage() {
     </div>
   );
 }
+
+
+
+
+
 

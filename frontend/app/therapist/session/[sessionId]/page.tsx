@@ -3,13 +3,17 @@
 import { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { apiClient } from "@/lib/api";
-import { SessionTranscript } from "@/types";
+import { SessionTranscript, RiskEvent } from "@/types";
 import { format } from "date-fns";
 
 export default function SessionTranscriptPage() {
   const [transcript, setTranscript] = useState<SessionTranscript | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [therapistEmail, setTherapistEmail] = useState<string | null>(null);
+  const [reviewingEventId, setReviewingEventId] = useState<string | null>(null);
+  const [reviewNotes, setReviewNotes] = useState<string>("");
+  const [reviewingLoading, setReviewingLoading] = useState(false);
   const router = useRouter();
   const params = useParams();
   const sessionId = params?.sessionId as string;
@@ -20,6 +24,7 @@ export default function SessionTranscriptPage() {
       router.push("/therapist");
       return;
     }
+    setTherapistEmail(email);
 
     if (sessionId) {
       loadTranscript(sessionId, email);
@@ -35,6 +40,35 @@ export default function SessionTranscriptPage() {
       setError(err.message || "Failed to load transcript");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleReviewEvent = async (eventId: string) => {
+    if (!therapistEmail) return;
+    
+    setReviewingLoading(true);
+    try {
+      await apiClient.reviewRiskEvent(eventId, therapistEmail, reviewNotes || undefined);
+      
+      // Update local state to mark as reviewed
+      if (transcript) {
+        setTranscript({
+          ...transcript,
+          risk_events: transcript.risk_events.map((event) =>
+            event.id === eventId
+              ? { ...event, therapist_reviewed: true }
+              : event
+          ),
+        });
+      }
+      
+      // Reset review state
+      setReviewingEventId(null);
+      setReviewNotes("");
+    } catch (err: any) {
+      alert("Failed to mark as reviewed: " + (err.message || "Unknown error"));
+    } finally {
+      setReviewingLoading(false);
     }
   };
 
@@ -96,6 +130,39 @@ export default function SessionTranscriptPage() {
       </header>
 
       <main className="max-w-5xl mx-auto px-6 py-8">
+        {/* AI Summary */}
+        {transcript.ai_summary && (
+          <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-6 mb-8">
+            <h2 className="text-lg font-semibold text-indigo-900 mb-4 flex items-center gap-2">
+              <span>🤖</span>
+              Session Summary
+            </h2>
+            <div className="text-indigo-900 max-w-none space-y-1">
+              {transcript.ai_summary.split('\n').map((line, idx) => {
+                if (!line.trim()) return null;
+                
+                // Check if it's a section header (starts with **)
+                const isHeader = line.startsWith('**') && !line.startsWith('   ');
+                
+                return (
+                  <div 
+                    key={idx} 
+                    className={`${isHeader ? 'mt-3 first:mt-0' : ''} ${line.startsWith('   ') ? 'ml-4' : ''}`}
+                  >
+                    <span 
+                      dangerouslySetInnerHTML={{ 
+                        __html: line
+                          .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                          .replace(/\"(.*?)\"/g, '<em class="text-indigo-700">"$1"</em>')
+                      }} 
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Risk Events */}
         {transcript.risk_events.length > 0 && (
           <div className="bg-red-50 border border-red-200 rounded-xl p-6 mb-8">
@@ -129,15 +196,52 @@ export default function SessionTranscriptPage() {
                       <strong>Type:</strong> {event.risk_type}
                     </p>
                   )}
-                  <span
-                    className={`inline-block mt-2 text-xs px-2 py-1 rounded ${
-                      event.therapist_reviewed
-                        ? "bg-green-100 text-green-800"
-                        : "bg-gray-100 text-gray-800"
-                    }`}
-                  >
-                    {event.therapist_reviewed ? "✓ Reviewed" : "Pending Review"}
-                  </span>
+                  
+                  {/* Review Section */}
+                  <div className="mt-3 pt-3 border-t border-gray-200">
+                    {event.therapist_reviewed ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs px-2 py-1 rounded bg-green-100 text-green-800">
+                          ✓ Reviewed
+                        </span>
+                      </div>
+                    ) : reviewingEventId === event.id ? (
+                      <div className="space-y-3">
+                        <textarea
+                          value={reviewNotes}
+                          onChange={(e) => setReviewNotes(e.target.value)}
+                          placeholder="Add clinical notes about this risk event (optional)..."
+                          className="w-full p-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                          rows={3}
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleReviewEvent(event.id)}
+                            disabled={reviewingLoading}
+                            className="px-3 py-1.5 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+                          >
+                            {reviewingLoading ? "Saving..." : "✓ Mark as Reviewed"}
+                          </button>
+                          <button
+                            onClick={() => {
+                              setReviewingEventId(null);
+                              setReviewNotes("");
+                            }}
+                            className="px-3 py-1.5 text-sm bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setReviewingEventId(event.id)}
+                        className="px-3 py-1.5 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+                      >
+                        📝 Review This Event
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>

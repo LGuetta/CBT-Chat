@@ -72,12 +72,14 @@ class APIClient {
   async sendMessage(
     accessCode: string,
     message: string,
-    sessionId?: string
+    sessionId?: string,
+    countryCode?: string
   ): Promise<ChatResponse> {
     const response = await this.client.post("/api/chat/message", {
       patient_access_code: accessCode,
       message,
       session_id: sessionId,
+      country_code: countryCode || "us",
     });
     return response.data;
   }

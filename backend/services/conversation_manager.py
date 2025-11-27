@@ -200,6 +200,7 @@ class ConversationManager:
         """
         # Get country-specific crisis resources
         resources = self._get_crisis_resources(context.country_code)
+        emergency_number = self._get_emergency_number(context.country_code)
 
         crisis_response = f"""I'm really concerned about what you've shared. Your safety is the most important thing right now.
 
@@ -212,7 +213,7 @@ class ConversationManager:
 
 {resources}
 
-If you're in immediate danger, please call emergency services (911 in the US) or go to your nearest emergency room.
+If you're in immediate danger, please call emergency services ({emergency_number}) or go to your nearest emergency room.
 
 If you have a therapist, please reach out to them as soon as possible.
 
@@ -399,6 +400,10 @@ I'm going to pause our session here because your safety comes first. This is the
         if therapist_brief:
             prompt += self._format_therapist_brief_section(therapist_brief)
 
+        # Get country-specific resources for LLM context
+        emergency_number = self._get_emergency_number(context.country_code)
+        crisis_resources = self._get_crisis_resources(context.country_code)
+
         # Add CURRENT PATIENT STATE section
         prompt += f"""
 ---
@@ -407,9 +412,16 @@ CURRENT PATIENT STATE:
 
 **Distress Level:** {distress_level.value}
 **Patient Name:** {context.user_name or "the patient"}
+**Patient Country:** {context.country_code.upper() if context.country_code else "US"}
 **Session Goal:** {context.session_goal or "Not specified"}
 **Messages This Session:** {len(context.history) // 2}
 **Grounding Used:** {context.grounding_count} times
+
+**IMPORTANT - Use these EXACT crisis resources for this patient's country:**
+{crisis_resources}
+Emergency Number: {emergency_number}
+
+When mentioning crisis resources or emergency numbers, ALWAYS use the resources listed above, NOT generic US numbers.
 
 """
 
@@ -540,6 +552,8 @@ and let them choose what feels most helpful right now.
 
     def _get_crisis_resources(self, country_code: str) -> str:
         """Get country-specific crisis resources."""
+        code = country_code.upper() if country_code else "US"
+        
         resources_map = {
             "US": """
 **US Crisis Resources:**
@@ -554,11 +568,70 @@ and let them choose what feels most helpful right now.
 - **Emergency Services:** 999
 """,
             "IT": """
-**Italian Crisis Resources:**
-- **Telefono Amico:** 02 2327 2327
+**Risorse di Crisi Italia:**
+- **Telefono Amico Italia:** 800 86 00 22 (gratuito, 24/7)
 - **Telefono Azzurro:** 19696
-- **Emergency Services:** 112
+- **WhatsApp Telefono Amico:** 324 011 72 52
+- **Emergenze:** 112
+""",
+            "DE": """
+**Deutsche Krisenressourcen:**
+- **Telefonseelsorge:** 0800 111 0 111 (kostenlos, 24/7)
+- **Kinder & Jugendliche:** 116 111
+- **Notruf:** 112
+""",
+            "FR": """
+**Ressources de Crise France:**
+- **SOS Amitié:** 09 72 39 40 50
+- **Fil Santé Jeunes:** 0 800 235 236
+- **Urgences:** 15 ou 112
+""",
+            "ES": """
+**Recursos de Crisis España:**
+- **Teléfono de la Esperanza:** 717 003 717
+- **Emergencias:** 112
+""",
+            "CH": """
+**Schweizer Krisenressourcen:**
+- **Die Dargebotene Hand:** 143
+- **Pro Juventute (Jugendliche):** 147
+- **Notruf:** 112
+""",
+            "AT": """
+**Österreichische Krisenressourcen:**
+- **Telefonseelsorge:** 142 (24/7)
+- **Rat auf Draht (Jugendliche):** 147
+- **Notruf:** 112
+""",
+            "NL": """
+**Nederlandse Crisislijnen:**
+- **113 Zelfmoordpreventie:** 113 of 0800-0113
+- **Chat:** 113.nl
+- **Noodnummer:** 112
+""",
+            "BE": """
+**Belgische Crisisdiensten:**
+- **Zelfmoordlijn:** 1813
+- **Centre de Prévention du Suicide:** 0800 32 123
+- **Noodnummer:** 112
 """,
         }
 
-        return resources_map.get(country_code, resources_map["US"])
+        return resources_map.get(code, resources_map["US"])
+    
+    def _get_emergency_number(self, country_code: str) -> str:
+        """Get the primary emergency number for a country."""
+        code = country_code.upper() if country_code else "US"
+        numbers = {
+            "US": "911",
+            "UK": "999",
+            "IT": "112",
+            "DE": "112",
+            "FR": "15 o 112",
+            "ES": "112",
+            "CH": "112",
+            "AT": "112",
+            "NL": "112",
+            "BE": "112",
+        }
+        return numbers.get(code, "112")

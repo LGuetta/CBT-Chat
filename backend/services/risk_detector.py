@@ -53,24 +53,60 @@ class RiskDetector:
         # Step 1: Keyword-based quick check
         detected_keywords = self._check_keywords(message)
 
-        # Step 2: LLM-based analysis for nuanced understanding
-        # Always run LLM for safety unless the message is too short to contain signal
-        if not detected_keywords and len(message.strip()) < 5:
+        # Step 2: Determine if LLM analysis is needed
+        # Only run LLM if:
+        # - High-risk keywords detected OR
+        # - Message is long enough (>50 chars) AND medium-risk keywords detected
+        has_high_risk_keywords = any("HIGH:" in kw for kw in detected_keywords)
+        has_medium_risk_keywords = any("MEDIUM:" in kw for kw in detected_keywords)
+        message_long_enough = len(message.strip()) > 50
+
+        # For very short messages without keywords, return NONE
+        if not detected_keywords and len(message.strip()) < 20:
             return RiskDetectionResult(
-                risk_level=RiskLevel.LOW,
-                reasoning="Message too short for reliable analysis",
+                risk_level=RiskLevel.NONE,
+                reasoning="Short conversational message",
                 triggers=[],
                 should_escalate=False,
                 should_end_session=False
             )
 
-        llm_result = await self._llm_risk_analysis(
-            message,
-            detected_keywords if detected_keywords else ["NO_KEYWORD_MATCH"],
-            conversation_history
-        )
-
-        return llm_result
+        # Only escalate to LLM if keywords detected or message is substantial
+        if has_high_risk_keywords:
+            # Always analyze high-risk keywords with LLM
+            llm_result = await self._llm_risk_analysis(
+                message,
+                detected_keywords,
+                conversation_history
+            )
+            return llm_result
+        elif has_medium_risk_keywords and message_long_enough:
+            # Analyze medium-risk with context
+            llm_result = await self._llm_risk_analysis(
+                message,
+                detected_keywords,
+                conversation_history
+            )
+            return llm_result
+        elif detected_keywords:
+            # Keywords detected but not enough context - return LOW without escalation
+            return RiskDetectionResult(
+                risk_level=RiskLevel.LOW,
+                reasoning="Keywords detected but context insufficient for escalation",
+                triggers=[kw.split(":")[1] for kw in detected_keywords],
+                should_escalate=False,
+                should_end_session=False,
+                confidence_score=0.4
+            )
+        else:
+            # No keywords, normal conversation
+            return RiskDetectionResult(
+                risk_level=RiskLevel.NONE,
+                reasoning="No risk indicators detected",
+                triggers=[],
+                should_escalate=False,
+                should_end_session=False
+            )
 
     def _check_keywords(self, message: str) -> List[str]:
         """Check for risk keywords in message (case-insensitive)."""

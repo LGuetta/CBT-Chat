@@ -173,12 +173,149 @@ async def get_session_transcript(
     # Get full transcript
     transcript = await db.get_session_transcript(session_id)
 
+    # Generate AI summary if not already cached
+    ai_summary = await _generate_session_summary(transcript)
+
     return SessionTranscriptResponse(
         session=SessionResponse(**transcript["session"]),
         messages=[MessageResponse(**m) for m in transcript["messages"]],
         risk_events=[RiskEventResponse(**r) for r in transcript["risk_events"]],
-        skill_completions=[SkillCompletionResponse(**s) for s in transcript["skill_completions"]]
+        skill_completions=[SkillCompletionResponse(**s) for s in transcript["skill_completions"]],
+        ai_summary=ai_summary
     )
+
+
+async def _generate_session_summary(transcript: dict) -> str:
+    """Generate a clinical summary of the session for the therapist."""
+    messages = transcript.get("messages", [])
+    risk_events = transcript.get("risk_events", [])
+    skills = transcript.get("skill_completions", [])
+    session = transcript.get("session", {})
+
+    if not messages:
+        return "No messages in this session."
+
+    user_messages = [m for m in messages if m.get("role") == "user"]
+    assistant_messages = [m for m in messages if m.get("role") == "assistant"]
+
+    summary_parts = []
+
+    # === SESSION OVERVIEW ===
+    duration = "Unknown"
+    if session.get("started_at") and session.get("ended_at"):
+        try:
+            from datetime import datetime
+            start = datetime.fromisoformat(session["started_at"].replace("Z", "+00:00"))
+            end = datetime.fromisoformat(session["ended_at"].replace("Z", "+00:00"))
+            duration = f"{int((end - start).total_seconds() / 60)} minutes"
+        except:
+            pass
+
+    summary_parts.append(f"**📊 Session Overview:** {len(messages)} messages, Duration: {duration}")
+
+    # === RISK ASSESSMENT ===
+    if risk_events:
+        risk_levels = [r.get("risk_level", "unknown") for r in risk_events]
+        high_risk_count = sum(1 for r in risk_levels if r == "high")
+        medium_risk_count = sum(1 for r in risk_levels if r == "medium")
+        
+        risk_keywords = []
+        for r in risk_events:
+            risk_keywords.extend(r.get("detected_keywords", []))
+        unique_keywords = list(set(risk_keywords))[:5]  # Top 5
+        
+        if high_risk_count > 0:
+            summary_parts.append(f"🚨 **Risk Assessment:** {high_risk_count} HIGH-RISK, {medium_risk_count} medium-risk events")
+        elif medium_risk_count > 0:
+            summary_parts.append(f"⚠️ **Risk Assessment:** {medium_risk_count} medium-risk events")
+        
+        if unique_keywords:
+            summary_parts.append(f"   - Keywords detected: {', '.join(unique_keywords)}")
+    else:
+        summary_parts.append("✅ **Risk Assessment:** No risk events triggered")
+
+    # === SKILLS PRACTICED ===
+    if skills:
+        skill_types = list(set(s.get("skill_type", "unknown") for s in skills))
+        mood_changes = []
+        for s in skills:
+            if s.get("mood_before") is not None and s.get("mood_after") is not None:
+                change = s["mood_after"] - s["mood_before"]
+                mood_changes.append(change)
+        
+        skill_summary = f"🎯 **Skills Practiced:** {', '.join(skill_types)}"
+        if mood_changes:
+            avg_change = sum(mood_changes) / len(mood_changes)
+            direction = "improved" if avg_change > 0 else "decreased" if avg_change < 0 else "stable"
+            skill_summary += f" (Mood {direction}: avg {avg_change:+.1f})"
+        summary_parts.append(skill_summary)
+
+    # === CONTENT ANALYSIS ===
+    if user_messages:
+        summary_parts.append("\n**💬 Conversation Content:**")
+        
+        # Extract key themes from patient messages
+        all_patient_text = " ".join([m.get("content", "") for m in user_messages])
+        
+        # Simple theme extraction (keywords)
+        theme_keywords = {
+            "anxiety": ["anxious", "worried", "nervous", "panic", "fear", "scared"],
+            "depression": ["sad", "hopeless", "empty", "tired", "worthless", "depressed"],
+            "relationships": ["friend", "partner", "family", "relationship", "people", "social"],
+            "work/school": ["work", "job", "school", "exam", "interview", "boss", "colleague"],
+            "self-esteem": ["failure", "stupid", "worthless", "inadequate", "not good enough"],
+            "sleep": ["sleep", "insomnia", "tired", "exhausted", "awake"],
+            "physical": ["pain", "body", "physical", "health", "sick"],
+        }
+        
+        detected_themes = []
+        text_lower = all_patient_text.lower()
+        for theme, keywords in theme_keywords.items():
+            if any(kw in text_lower for kw in keywords):
+                detected_themes.append(theme)
+        
+        if detected_themes:
+            summary_parts.append(f"   - **Main themes:** {', '.join(detected_themes)}")
+        
+        # First and last messages for context
+        first_msg = user_messages[0].get("content", "")
+        if len(first_msg) > 150:
+            first_msg = first_msg[:150] + "..."
+        summary_parts.append(f"   - **Session started with:** \"{first_msg}\"")
+        
+        if len(user_messages) > 1:
+            last_msg = user_messages[-1].get("content", "")
+            if len(last_msg) > 150:
+                last_msg = last_msg[:150] + "..."
+            summary_parts.append(f"   - **Session ended with:** \"{last_msg}\"")
+        
+        # Count questions asked by patient
+        questions = sum(1 for m in user_messages if "?" in m.get("content", ""))
+        if questions > 0:
+            summary_parts.append(f"   - Patient asked {questions} questions during session")
+    
+    # === CLINICAL OBSERVATIONS ===
+    summary_parts.append("\n**🔍 Clinical Observations:**")
+    
+    # Engagement level
+    avg_msg_length = sum(len(m.get("content", "")) for m in user_messages) / max(len(user_messages), 1)
+    if avg_msg_length > 200:
+        summary_parts.append("   - High engagement (detailed responses)")
+    elif avg_msg_length > 50:
+        summary_parts.append("   - Moderate engagement")
+    else:
+        summary_parts.append("   - Brief responses (possible low engagement or distress)")
+    
+    # Session outcome
+    status = session.get("status", "unknown")
+    if status == "flagged":
+        summary_parts.append("   - 🚩 **Session was flagged** - requires clinical review")
+    elif status == "completed":
+        summary_parts.append("   - ✓ Session completed normally")
+    elif status == "terminated":
+        summary_parts.append("   - ⚠️ Session was terminated (possibly due to crisis protocol)")
+
+    return "\n".join(summary_parts)
 
 
 @router.get("/patient/{patient_id}/sessions", response_model=List[SessionResponse])

@@ -256,4 +256,5 @@ export interface SessionTranscript {
   messages: Message[];
   risk_events: RiskEvent[];
   skill_completions: SkillCompletion[];
+  ai_summary?: string;
 }

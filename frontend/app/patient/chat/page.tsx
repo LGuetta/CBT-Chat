@@ -5,34 +5,35 @@ import { useRouter } from "next/navigation";
 import { apiClient } from "@/lib/api";
 import { Message, RiskLevel, DistressLevel } from "@/types";
 
+// RiskLevel is still imported for type checking API responses
+
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [accessCode, setAccessCode] = useState<string | null>(null);
+  const [country, setCountry] = useState<string>("us");
   const [sessionEnded, setSessionEnded] = useState(false);
-  const [riskResources, setRiskResources] = useState<Record<string, string> | null>(null);
+  const [crisisResources, setCrisisResources] = useState<Record<string, string> | null>(null);
   const [currentDistress, setCurrentDistress] = useState<DistressLevel>(DistressLevel.NONE);
-  const [currentRisk, setCurrentRisk] = useState<RiskLevel>(RiskLevel.NONE);
-  const [riskBanner, setRiskBanner] = useState<{
-    level: RiskLevel;
-    reasoning?: string;
-    triggers?: string[];
-    resources?: Record<string, string> | null;
-  } | null>(null);
+  const [showSupportBanner, setShowSupportBanner] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
   useEffect(() => {
-    // Get access code from session storage
+    // Get access code and country from session storage
     const code = sessionStorage.getItem("patient_access_code");
+    const storedCountry = sessionStorage.getItem("patient_country");
     if (!code) {
       router.push("/patient");
       return;
     }
     setAccessCode(code);
+    if (storedCountry) {
+      setCountry(storedCountry);
+    }
   }, [router]);
 
   useEffect(() => {
@@ -58,26 +59,13 @@ export default function ChatPage() {
   const getDistressLabel = (level?: DistressLevel) => {
     switch (level) {
       case DistressLevel.CRISIS:
-        return { text: "Crisis Support", icon: "🚨" };
+        return { text: "We're here to help", icon: "💙" };
       case DistressLevel.SEVERE:
-        return { text: "High Distress", icon: "⚠️" };
+        return { text: "Take your time", icon: "🤗" };
       case DistressLevel.MODERATE:
-        return { text: "Moderate Distress", icon: "⚡" };
+        return { text: "Working through it", icon: "💪" };
       case DistressLevel.MILD:
-        return { text: "Mild Distress", icon: "💭" };
-      default:
-        return null;
-    }
-  };
-
-  const getRiskChip = (level?: RiskLevel) => {
-    switch (level) {
-      case RiskLevel.HIGH:
-        return { text: "High Risk", className: "bg-red-100 text-red-700", icon: "🚨" };
-      case RiskLevel.MEDIUM:
-        return { text: "Monitor Closely", className: "bg-orange-100 text-orange-700", icon: "⚠️" };
-      case RiskLevel.LOW:
-        return { text: "Low Risk", className: "bg-yellow-100 text-yellow-700", icon: "🟡" };
+        return { text: "Exploring", icon: "💭" };
       default:
         return null;
     }
@@ -103,7 +91,8 @@ export default function ChatPage() {
       const response = await apiClient.sendMessage(
         accessCode,
         userMessage,
-        sessionId || undefined
+        sessionId || undefined,
+        country // Pass country for localized resources
       );
 
       // Update session ID if this is first message
@@ -111,15 +100,12 @@ export default function ChatPage() {
         setSessionId(response.session_id);
       }
 
-      // Mark message with metadata
+      // Mark message with metadata (no risk info for patient)
       const enhancedMessage: Message = {
         ...response.message,
         distress_level: response.distress_level,
         is_grounding_exercise: response.grounding_offered,
         is_disclaimer: response.disclaimer_shown,
-        risk_level: response.risk_level,
-        risk_reasoning: response.risk_reasoning,
-        risk_triggers: response.risk_triggers,
       };
 
       // Update user message metadata + append assistant response
@@ -129,8 +115,6 @@ export default function ChatPage() {
           const lastIndex = updated.length - 1;
           updated[lastIndex] = {
             ...updated[lastIndex],
-            risk_level: response.risk_level,
-            risk_reasoning: response.risk_reasoning,
             distress_level: response.distress_level ?? updated[lastIndex].distress_level,
           };
         }
@@ -142,25 +126,14 @@ export default function ChatPage() {
         setCurrentDistress(response.distress_level);
       }
 
-      // Update current risk indicator
-      setCurrentRisk(response.risk_level);
-
-      // Handle risk detection banner/resources
-      if (response.risk_detected) {
-        setRiskBanner({
-          level: response.risk_level,
-          reasoning: response.risk_reasoning,
-          triggers: response.risk_triggers || [],
-          resources: response.resources || null,
-        });
-        setRiskResources(response.resources || null);
+      // Handle crisis resources (show support without alarming the patient)
+      if (response.risk_detected && response.resources) {
+        setCrisisResources(response.resources);
+        setShowSupportBanner(true);
 
         if (response.risk_level === RiskLevel.HIGH) {
           setSessionEnded(true);
         }
-      } else {
-        setRiskBanner(null);
-        setRiskResources(null);
       }
 
       // Handle session end
@@ -222,15 +195,6 @@ export default function ChatPage() {
                 {getDistressLabel(currentDistress)?.icon} {getDistressLabel(currentDistress)?.text}
               </span>
             )}
-            {currentRisk !== RiskLevel.NONE && (
-              <span
-                className={`text-xs px-2 py-1 rounded-full ${
-                  getRiskChip(currentRisk)?.className
-                }`}
-              >
-                {getRiskChip(currentRisk)?.icon} {getRiskChip(currentRisk)?.text}
-              </span>
-            )}
           </div>
         </div>
         <button
@@ -241,22 +205,17 @@ export default function ChatPage() {
         </button>
       </header>
 
-      {/* Risk Banner */}
-      {riskBanner && (
-        <div className="bg-white border-b border-t border-red-200 px-6 py-3">
+      {/* Support Resources Banner - shown when needed, without alarming language */}
+      {showSupportBanner && crisisResources && (
+        <div className="bg-blue-50 border-b border-blue-200 px-6 py-3">
           <div className="max-w-3xl mx-auto">
-            <div className="flex items-center gap-2 text-red-800 font-semibold">
-              <span>{getRiskChip(riskBanner.level)?.icon}</span>
-              <span>{getRiskChip(riskBanner.level)?.text}</span>
+            <div className="flex items-center gap-2 text-blue-800 font-medium">
+              <span>💙</span>
+              <span>Support resources are available</span>
             </div>
-            {riskBanner.reasoning && (
-              <p className="text-sm text-red-700 mt-1">{riskBanner.reasoning}</p>
-            )}
-            {riskBanner.triggers && riskBanner.triggers.length > 0 && (
-              <p className="text-xs text-red-600 mt-1">
-                Triggers: {riskBanner.triggers.join(", ")}
-              </p>
-            )}
+            <p className="text-sm text-blue-700 mt-1">
+              If you'd like to talk to someone, these resources are here for you.
+            </p>
           </div>
         </div>
       )}
@@ -304,36 +263,6 @@ export default function ChatPage() {
                 {/* Message content */}
                 <div className="whitespace-pre-wrap leading-relaxed">{msg.content}</div>
 
-                {/* Risk/Distress indicators */}
-                {(msg.risk_level || msg.distress_level) && (
-                  <div className="mt-3 pt-2 border-t border-gray-200 flex gap-3 text-xs">
-                    {msg.risk_level && msg.risk_level !== RiskLevel.NONE && (
-                      <div className="flex flex-col">
-                        <span
-                          className={`px-2 py-1 rounded ${
-                            msg.risk_level === RiskLevel.HIGH
-                              ? "bg-red-100 text-red-700"
-                              : msg.risk_level === RiskLevel.MEDIUM
-                              ? "bg-orange-100 text-orange-700"
-                              : "bg-yellow-100 text-yellow-700"
-                          }`}
-                        >
-                          Risk: {msg.risk_level}
-                        </span>
-                        {msg.risk_reasoning && (
-                          <span className="mt-1 text-[11px] text-gray-600 max-w-xs">
-                            {msg.risk_reasoning}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                    {msg.distress_level && msg.distress_level !== DistressLevel.NONE && (
-                      <span className="px-2 py-1 rounded bg-gray-100 text-gray-600">
-                        {getDistressLabel(msg.distress_level)?.icon} {msg.distress_level}
-                      </span>
-                    )}
-                  </div>
-                )}
               </div>
             </div>
           ))}
@@ -352,18 +281,21 @@ export default function ChatPage() {
         </div>
       </div>
 
-      {/* Risk Resources Alert */}
-      {riskResources && (
-        <div className="bg-red-50 border-t border-red-200 px-6 py-4">
+      {/* Support Resources - shown when needed */}
+      {crisisResources && showSupportBanner && (
+        <div className="bg-blue-50 border-t border-blue-200 px-6 py-4">
           <div className="max-w-3xl mx-auto">
-            <h3 className="font-semibold text-red-900 mb-2 flex items-center gap-2">
-              <span className="text-xl">🚨</span>
-              Crisis Resources
+            <h3 className="font-semibold text-blue-900 mb-2 flex items-center gap-2">
+              <span className="text-xl">💙</span>
+              Support Resources
             </h3>
-            <div className="text-sm text-red-800 space-y-1">
-              {Object.entries(riskResources).map(([key, value]) => (
+            <p className="text-sm text-blue-700 mb-3">
+              If you'd like to talk to someone, these resources are available 24/7:
+            </p>
+            <div className="text-sm text-blue-800 space-y-1">
+              {Object.entries(crisisResources).map(([key, value]) => (
                 <div key={key}>
-                  <strong>{key}:</strong> {value}
+                  <strong>{key.replace(/_/g, " ")}:</strong> {value}
                 </div>
               ))}
             </div>

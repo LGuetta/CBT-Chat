@@ -3,8 +3,23 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
+const COUNTRY_OPTIONS = [
+  { code: "us", name: "United States", flag: "🇺🇸" },
+  { code: "uk", name: "United Kingdom", flag: "🇬🇧" },
+  { code: "it", name: "Italy", flag: "🇮🇹" },
+  { code: "de", name: "Germany", flag: "🇩🇪" },
+  { code: "fr", name: "France", flag: "🇫🇷" },
+  { code: "es", name: "Spain", flag: "🇪🇸" },
+  { code: "ch", name: "Switzerland", flag: "🇨🇭" },
+  { code: "at", name: "Austria", flag: "🇦🇹" },
+  { code: "nl", name: "Netherlands", flag: "🇳🇱" },
+  { code: "be", name: "Belgium", flag: "🇧🇪" },
+  { code: "other", name: "Other", flag: "🌍" },
+];
+
 export default function PatientPortal() {
   const [accessCode, setAccessCode] = useState("");
+  const [country, setCountry] = useState("us");
   const [error, setError] = useState("");
   const router = useRouter();
 
@@ -16,8 +31,9 @@ export default function PatientPortal() {
       return;
     }
 
-    // Store access code and navigate to chat
+    // Store access code and country, then navigate to chat
     sessionStorage.setItem("patient_access_code", accessCode.trim());
+    sessionStorage.setItem("patient_country", country);
     router.push("/patient/chat");
   };
 
@@ -55,6 +71,30 @@ export default function PatientPortal() {
             {error && (
               <p className="mt-2 text-sm text-red-600">{error}</p>
             )}
+          </div>
+
+          <div>
+            <label
+              htmlFor="country"
+              className="block text-sm font-medium text-gray-700 mb-2"
+            >
+              Your Country
+            </label>
+            <select
+              id="country"
+              value={country}
+              onChange={(e) => setCountry(e.target.value)}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
+            >
+              {COUNTRY_OPTIONS.map((c) => (
+                <option key={c.code} value={c.code}>
+                  {c.flag} {c.name}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-gray-500">
+              Used for emergency resources in your region
+            </p>
           </div>
 
           <button

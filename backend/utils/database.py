@@ -61,6 +61,22 @@ class Database:
             "patient_id", patient_id
         ).order("created_at", desc=True).limit(20).execute()
 
+        # Construct therapist_brief object from patient fields
+        if patient:
+            therapist_brief = None
+            if patient.get("case_formulation") or patient.get("presenting_problems") or patient.get("treatment_goals"):
+                therapist_brief = {
+                    "case_formulation": patient.get("case_formulation"),
+                    "presenting_problems": patient.get("presenting_problems") or [],
+                    "treatment_goals": patient.get("treatment_goals") or [],
+                    "therapy_stage": patient.get("therapy_stage") or "early",
+                    "preferred_techniques": patient.get("preferred_techniques") or {},
+                    "sensitivities": patient.get("sensitivities") or {},
+                    "therapist_language": patient.get("therapist_language") or {},
+                    "contraindications": patient.get("contraindications") or [],
+                }
+            patient["therapist_brief"] = therapist_brief
+
         return {
             "patient": patient,
             "sessions": sessions,
@@ -486,7 +502,22 @@ class Database:
             "id", patient_id
         ).execute()
 
-        return response.data[0]
+        patient = response.data[0]
+
+        # Construct therapist_brief object from updated patient fields
+        therapist_brief = {
+            "case_formulation": patient.get("case_formulation"),
+            "presenting_problems": patient.get("presenting_problems") or [],
+            "treatment_goals": patient.get("treatment_goals") or [],
+            "therapy_stage": patient.get("therapy_stage") or "early",
+            "preferred_techniques": patient.get("preferred_techniques") or {},
+            "sensitivities": patient.get("sensitivities") or {},
+            "therapist_language": patient.get("therapist_language") or {},
+            "contraindications": patient.get("contraindications") or [],
+        }
+        patient["therapist_brief"] = therapist_brief
+
+        return patient
 
 
 # Global database instance
