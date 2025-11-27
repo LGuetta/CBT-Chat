@@ -23,6 +23,10 @@ from models.schemas import (
     PatientDetailsResponse,
     PatientWithBrief,
     UpdateTherapistBriefRequest,
+    TherapistBrief,
+    PreferredTechniques,
+    ClinicalSensitivities,
+    TherapistLanguage,
 )
 from utils.database import get_db
 
@@ -271,8 +275,13 @@ async def get_patient_details(
             detail="Patient not found"
         )
 
+    patient_record = details["patient"]
+    brief = _build_therapist_brief(patient_record)
+    if brief:
+        patient_record["therapist_brief"] = brief
+
     return PatientDetailsResponse(
-        patient=PatientWithBrief(**details["patient"]),
+        patient=PatientWithBrief(**patient_record),
         recent_sessions=[SessionResponse(**s) for s in details["sessions"]],
         recent_risk_events=[RiskEventResponse(**r) for r in details["risk_events"]]
     )
@@ -317,6 +326,32 @@ async def update_patient_brief(
 
     return PatientWithBrief(**updated_patient)
 
+
+def _build_therapist_brief(patient: dict) -> Optional[dict]:
+    """
+    Build TherapistBrief data from patient record if present.
+    """
+    if not patient or not patient.get("case_formulation"):
+        return None
+
+    brief = TherapistBrief(
+        case_formulation=patient.get("case_formulation"),
+        presenting_problems=patient.get("presenting_problems", []),
+        treatment_goals=patient.get("treatment_goals", []),
+        therapy_stage=patient.get("therapy_stage", "early"),
+        preferred_techniques=PreferredTechniques(
+            **(patient.get("preferred_techniques", {}))
+        ) if patient.get("preferred_techniques") else PreferredTechniques(),
+        sensitivities=ClinicalSensitivities(
+            **(patient.get("sensitivities", {}))
+        ) if patient.get("sensitivities") else ClinicalSensitivities(),
+        therapist_language=TherapistLanguage(
+            **(patient.get("therapist_language", {}))
+        ) if patient.get("therapist_language") else TherapistLanguage(),
+        contraindications=patient.get("contraindications", [])
+    )
+
+    return brief.model_dump()
 
 @router.post("/risk-event/{risk_event_id}/review")
 async def review_risk_event(
